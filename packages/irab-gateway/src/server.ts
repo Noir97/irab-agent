@@ -64,6 +64,20 @@ const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const DEFAULT_RABYTE_BASE_URL = "https://test-llm.rabyte.cn";
 const DEFAULT_TOOL_TIMEOUT_MS = 30_000;
 const TOOL_NAMES = ["search_paipai", "search_global_data", "search_cn_marketdata", "search_web", "fetch_web"] as const;
+const MODEL_PROXY_IGNORED_HEADERS = new Set([
+	"authorization",
+	"connection",
+	"content-length",
+	"host",
+	"keep-alive",
+	"proxy-authenticate",
+	"proxy-authorization",
+	"te",
+	"trailer",
+	"transfer-encoding",
+	"upgrade",
+	"via",
+]);
 
 class GatewayHttpError extends Error {
 	status: number;
@@ -696,7 +710,7 @@ function proxyHeaders(request: IncomingMessage, apiKey: string): Record<string, 
 	for (const [key, value] of Object.entries(request.headers)) {
 		if (!value) continue;
 		const lower = key.toLowerCase();
-		if (lower === "authorization" || lower === "host" || lower === "content-length") continue;
+		if (MODEL_PROXY_IGNORED_HEADERS.has(lower) || lower.startsWith("x-forwarded-")) continue;
 		headers[key] = Array.isArray(value) ? value.join(", ") : value;
 	}
 	headers.Authorization = `Bearer ${apiKey}`;

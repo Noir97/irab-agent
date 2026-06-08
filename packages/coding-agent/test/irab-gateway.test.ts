@@ -15,6 +15,9 @@ type HttpJsonResult = {
 type UpstreamCall = {
 	url: string;
 	authorization: string;
+	connection: string;
+	via: string;
+	xForwardedHost: string;
 	body: string;
 };
 
@@ -52,6 +55,39 @@ async function postJson(url: string, body: Record<string, unknown>, token?: stri
 		body: JSON.stringify(body),
 	});
 	return { status: response.status, payload: (await response.json()) as unknown };
+}
+
+async function postJsonWithHeaders(
+	url: string,
+	body: Record<string, unknown>,
+	headers: Record<string, string>,
+): Promise<HttpJsonResult> {
+	return new Promise((resolve, reject) => {
+		const requestBody = JSON.stringify(body);
+		const request = httpRequest(
+			new URL(url),
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					"Content-Length": String(Buffer.byteLength(requestBody)),
+					...headers,
+				},
+			},
+			(response) => {
+				const chunks: Buffer[] = [];
+				response.on("data", (chunk: Buffer) => {
+					chunks.push(chunk);
+				});
+				response.on("end", () => {
+					const payload = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+					resolve({ status: response.statusCode ?? 0, payload });
+				});
+			},
+		);
+		request.once("error", reject);
+		request.end(requestBody);
+	});
 }
 
 function streamResponse(chunks: string[], delayMs: number): Response {
@@ -129,6 +165,9 @@ function createFetchImpl(calls: UpstreamCall[]): typeof fetch {
 		calls.push({
 			url,
 			authorization: headers.get("authorization") ?? "",
+			connection: headers.get("connection") ?? "",
+			via: headers.get("via") ?? "",
+			xForwardedHost: headers.get("x-forwarded-host") ?? "",
 			body,
 		});
 
@@ -242,18 +281,23 @@ describe("IRaB gateway", () => {
 			url: "https://paipai.test/paipai_data",
 		});
 
-		const chatResponse = await fetch(`${baseUrl}/v1/chat/completions`, {
-			method: "POST",
-			headers: {
+		const chatResponse = await postJsonWithHeaders(
+			`${baseUrl}/v1/chat/completions`,
+			{ model: "allowed-model", messages: [] },
+			{
 				Authorization: `Bearer ${token}`,
-				"Content-Type": "application/json",
+				Connection: "keep-alive",
+				Via: "1.1 Caddy",
+				"X-Forwarded-Host": "49.233.81.41",
 			},
-			body: JSON.stringify({ model: "allowed-model", messages: [] }),
-		});
+		);
 		expect(chatResponse.status).toBe(200);
 		expect(upstreamCalls[1]).toMatchObject({
 			url: "https://rabyte.test/v1/chat/completions",
 			authorization: "Bearer rabyte_key",
+			connection: "",
+			via: "",
+			xForwardedHost: "",
 		});
 
 		expect(existsSync(paths.statePath)).toBe(true);
