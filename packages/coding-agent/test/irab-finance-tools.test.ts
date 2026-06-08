@@ -20,7 +20,6 @@ type IrabToolDetailsForTest = {
 };
 
 function registerIrabExtension(): RegisteredIrabExtension {
-	process.env.IRAB_TOOL_MODE = "replay";
 	const providers = new Map<string, ProviderConfig>();
 	const tools = new Map<string, ToolDefinition>();
 	irabFinanceToolsExtension({
@@ -74,10 +73,12 @@ const deepTaskReasoningReplayModelIds = [
 describe("IRaB finance tools extension", () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
-		process.env.IRAB_TOOL_MODE = "replay";
 		delete process.env.IRAB_PAIPAI_BASE_URL;
 		delete process.env.IRAB_GLOBAL_DATA_BASE_URL;
 		delete process.env.IRAB_WEBSEARCH_SERVICE_URL;
+		delete process.env.IRAB_XIAOSU_READER_URL;
+		delete process.env.IRAB_XIAOSU_READER_OVERSEAS_URL;
+		delete process.env.IRAB_XIAOSU_READER_ACCESS_KEY;
 	});
 
 	it("registers the five benchmark tools", async () => {
@@ -131,29 +132,49 @@ describe("IRaB finance tools extension", () => {
 		});
 	});
 
-	it("returns numbered replay source artifacts", async () => {
+	it("serializes live PaiPai results as numbered source artifacts", async () => {
 		const { tools } = registerIrabExtension();
+		process.env.IRAB_PAIPAI_BASE_URL = "https://paipai.test";
+		vi.stubGlobal(
+			"fetch",
+			async () =>
+				new Response(
+					JSON.stringify({
+						data: [
+							{
+								id: "paipai-byd-margin",
+								title: "BYD 2025 Q4 margin review",
+								content:
+									"BYD's fourth-quarter gross margin improvement came from battery cost reductions and a richer export mix.",
+								publish_time: "2026-02-18",
+								source: "PaiPai Research",
+							},
+						],
+					}),
+					{ status: 200 },
+				),
+		);
 		const tool = getOnlyExtensionTool(tools, "search_paipai");
 
 		const toolResult = await tool.execute(
 			"call_1",
-			{ query: "BYD battery margin", limit: 2 },
+			{ query: "BYD battery margin", limit: 1 },
 			undefined,
 			undefined,
 			{} as ExtensionContext,
 		);
 		const text = textFromToolResult(toolResult);
 
-		expect(text).toContain("Found 2 items");
+		expect(text).toContain("Found 1 item");
 		expect(text).toContain("[source:");
 		expect(text).not.toContain("[Reference");
 		expect(text).toContain("BYD's fourth-quarter gross margin improvement");
 		expect(text).not.toContain("citation_contract");
 		expect(toolResult.details).toMatchObject({
-			mode: "replay",
+			mode: "live",
 			tool: "search_paipai",
 			query: "BYD battery margin",
-			fixture_version: 1,
+			endpoint: "https://paipai.test/paipai_data",
 		});
 		expect(irabDetails(toolResult).artifacts[0]).toMatchObject({
 			type: "text",
@@ -161,8 +182,25 @@ describe("IRaB finance tools extension", () => {
 		});
 	});
 
-	it("stores replay table artifacts as CSV files", async () => {
+	it("stores live global-data table artifacts as CSV files", async () => {
 		const { tools } = registerIrabExtension();
+		process.env.IRAB_GLOBAL_DATA_BASE_URL = "https://global-data.test";
+		vi.stubGlobal(
+			"fetch",
+			async () =>
+				new Response(
+					JSON.stringify({
+						data: [
+							{
+								chunks:
+									"| symbol | date | marketCap |\n| --- | --- | --- |\n| AAPL | 2026-06-05 | 4514011993040 |",
+								indic_names: ["Apple daily market snapshot"],
+							},
+						],
+					}),
+					{ status: 200 },
+				),
+		);
 		const tool = getOnlyExtensionTool(tools, "search_global_data");
 
 		const toolResult = await tool.execute(
@@ -180,6 +218,7 @@ describe("IRaB finance tools extension", () => {
 		expect(text).not.toContain("[Table");
 		expect(text).toContain("Data preview:");
 		expect(text).toContain("File:");
+		expect(text).toContain("AAPL");
 		expect(filePath).toBeTruthy();
 		expect(existsSync(filePath ?? "")).toBe(true);
 		expect(details.artifact_dir).toBeTruthy();
@@ -187,7 +226,6 @@ describe("IRaB finance tools extension", () => {
 
 	it("serializes live CN marketdata chunks as table previews", async () => {
 		const { tools } = registerIrabExtension();
-		process.env.IRAB_TOOL_MODE = "live";
 		process.env.IRAB_PAIPAI_BASE_URL = "https://paipai.test";
 		vi.stubGlobal(
 			"fetch",
@@ -232,13 +270,23 @@ describe("IRaB finance tools extension", () => {
 		});
 	});
 
-	it("fetches a replay URL as a numbered reference artifact", async () => {
+	it("fetches a URL as a numbered reference artifact", async () => {
 		const { tools } = registerIrabExtension();
+		process.env.IRAB_XIAOSU_READER_URL = "";
+		process.env.IRAB_XIAOSU_READER_OVERSEAS_URL = "";
+		process.env.IRAB_XIAOSU_READER_ACCESS_KEY = "";
+		vi.stubGlobal(
+			"fetch",
+			async () =>
+				new Response("Apple reported net sales of 95.4 billion USD for the quarter ended March 28, 2026.", {
+					status: 200,
+				}),
+		);
 		const tool = getOnlyExtensionTool(tools, "fetch_web");
 
 		const toolResult = await tool.execute(
 			"call_3",
-			{ url: "https://www.sec.gov/Archives/edgar/data/320193/replay/aapl-2026q2-10q.htm" },
+			{ url: "https://www.sec.gov/Archives/edgar/data/320193/aapl-2026q2-10q.htm" },
 			undefined,
 			undefined,
 			{} as ExtensionContext,
@@ -253,7 +301,6 @@ describe("IRaB finance tools extension", () => {
 
 	it("serializes live web search snippets without full page content", async () => {
 		const { tools } = registerIrabExtension();
-		process.env.IRAB_TOOL_MODE = "live";
 		process.env.IRAB_WEBSEARCH_SERVICE_URL = "https://web-search.test";
 		vi.stubGlobal(
 			"fetch",

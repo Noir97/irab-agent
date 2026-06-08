@@ -11,7 +11,7 @@ Initial project notes:
 
 - [IRaB benchmark spec and goals](docs/irab-benchmark-spec.md)
 - Runtime citation guidance: [.pi/APPEND_SYSTEM.md](.pi/APPEND_SYSTEM.md)
-- Replay finance tools: [packages/irab-finance-tools](packages/irab-finance-tools)
+- Live finance tools: [packages/irab-finance-tools](packages/irab-finance-tools)
 
 Local IRaB startup:
 
@@ -21,10 +21,12 @@ npm install --ignore-scripts
 ./pi-test.sh --model rabyte/wangsu-claude-opus-4-6
 ```
 
-The IRaB extension auto-loads `.env` from the repo root. Use `IRAB_TOOL_MODE=live`
-for DeepTask-backed PaiPai/global-data/web tools, or `IRAB_TOOL_MODE=replay` for
-fixture-only benchmark smoke tests. Skill discovery is disabled by default; pass
-`--skills` only when you intentionally want global/project skills loaded.
+The IRaB extension auto-loads `.env` from the repo root and currently runs the
+finance tools against configured live services. Static replay fixtures are not
+enabled because benchmark replay should be generated from recorded live runs only
+after an explicit sanitization/export step. Skill discovery is disabled by
+default; pass `--skills` only when you intentionally want global/project skills
+loaded.
 
 ---
 

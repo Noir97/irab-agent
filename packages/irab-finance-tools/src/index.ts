@@ -9,14 +9,12 @@ import { Type } from "typebox";
 const DEFAULT_LIMIT = 5;
 const MAX_LIMIT = 10;
 const DEFAULT_TIMEOUT_MS = 30_000;
-const DEFAULT_FIXTURE_PATH = fileURLToPath(new URL("../fixtures/replay-fixtures.json", import.meta.url));
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const DEFAULT_RABYTE_BASE_URL = "https://test-llm.rabyte.cn";
 const DEFAULT_ARTIFACT_DIR = join(REPO_ROOT, "tmp", "irab-artifacts");
 
 type IrabSearchToolName = "search_paipai" | "search_global_data" | "search_cn_marketdata" | "search_web";
 type IrabToolName = IrabSearchToolName | "fetch_web";
-type IrabToolMode = "replay" | "live";
 
 type EvidenceCell = string | number | boolean | null;
 
@@ -36,19 +34,13 @@ type EvidenceRecord = {
 	metadata: Record<string, unknown>;
 };
 
-type ReplayFixtureFile = {
-	version: number;
-	records: Record<IrabSearchToolName, EvidenceRecord[]>;
-};
-
 type IrabToolDetails = {
-	mode: IrabToolMode;
+	mode: "live";
 	tool: IrabToolName;
 	query: string;
 	results: EvidenceRecord[];
 	artifacts: SerializedArtifactDetails[];
 	artifact_dir?: string;
-	fixture_version?: number;
 	endpoint?: string;
 	message?: string;
 };
@@ -140,11 +132,6 @@ type LiveConfig = {
 type HttpJsonResult = {
 	status: number;
 	payload: unknown;
-};
-
-type ScoredRecord = {
-	record: EvidenceRecord;
-	score: number;
 };
 
 type IrabToolDetailsInput = Omit<IrabToolDetails, "artifacts">;
@@ -338,14 +325,6 @@ function registerRabyteProvider(pi: ExtensionAPI): void {
 	});
 }
 
-function getFixturePath(): string {
-	return env("IRAB_REPLAY_FIXTURES", DEFAULT_FIXTURE_PATH);
-}
-
-function getToolMode(): IrabToolMode {
-	return env("IRAB_TOOL_MODE").toLowerCase() === "live" ? "live" : "replay";
-}
-
 function numberEnv(name: string, fallback: number): number {
 	const value = Number(env(name));
 	if (!Number.isFinite(value) || value <= 0) return fallback;
@@ -367,74 +346,9 @@ function liveConfig(): LiveConfig {
 	};
 }
 
-function loadReplayFixtures(): ReplayFixtureFile {
-	const raw = readFileSync(getFixturePath(), "utf8");
-	return JSON.parse(raw) as ReplayFixtureFile;
-}
-
 function normalizeLimit(limit: number | undefined): number {
 	if (limit === undefined || !Number.isFinite(limit)) return DEFAULT_LIMIT;
 	return Math.max(1, Math.min(MAX_LIMIT, Math.trunc(limit)));
-}
-
-function tokenize(value: string): string[] {
-	return value
-		.toLowerCase()
-		.split(/[^a-z0-9\u4e00-\u9fff]+/u)
-		.filter((term) => term.length >= 2);
-}
-
-function metadataText(metadata: Record<string, unknown>): string {
-	return Object.values(metadata)
-		.map((value) => {
-			if (value === null || value === undefined) return "";
-			if (Array.isArray(value)) return value.join(" ");
-			return String(value);
-		})
-		.join(" ");
-}
-
-function collectSearchText(record: EvidenceRecord): string {
-	return [
-		record.source_id,
-		record.title,
-		record.date,
-		record.publisher,
-		record.url,
-		record.content,
-		metadataText(record.metadata),
-	]
-		.join(" ")
-		.toLowerCase();
-}
-
-function scoreRecord(record: EvidenceRecord, terms: string[]): number {
-	const searchText = collectSearchText(record);
-	return terms.reduce((score, term) => (searchText.includes(term) ? score + 1 : score), 0);
-}
-
-function searchRecords(records: EvidenceRecord[], query: string, limit: number | undefined): EvidenceRecord[] {
-	const terms = tokenize(query);
-	const cappedLimit = normalizeLimit(limit);
-	const scored = records.map(
-		(record): ScoredRecord => ({
-			record,
-			score: terms.length === 0 ? 1 : scoreRecord(record, terms),
-		}),
-	);
-	const matched = terms.length === 0 ? scored : scored.filter((entry) => entry.score > 0);
-
-	return matched
-		.sort((left, right) => {
-			if (left.score !== right.score) return right.score - left.score;
-			return right.record.date.localeCompare(left.record.date);
-		})
-		.slice(0, cappedLimit)
-		.map((entry) => entry.record);
-}
-
-function allRecords(fixtures: ReplayFixtureFile): EvidenceRecord[] {
-	return Object.values(fixtures.records).flat();
 }
 
 let nextArtifactId = 1;
@@ -1451,10 +1365,9 @@ function searchMessage(
 	query: string,
 	recordCount: number,
 	artifactCount: number,
-	mode: IrabToolMode,
 ): string | undefined {
 	if (artifactCount === 0) {
-		return `No ${mode} evidence matched "${query}". Do not invent citations.`;
+		return `No live evidence matched "${query}". Do not invent citations.`;
 	}
 	if (tool === "search_paipai") return `Found ${artifactCount} items`;
 	if (tool === "search_web") return `Found ${artifactCount} results`;
@@ -1474,7 +1387,7 @@ async function buildLiveSearchResult(
 ): Promise<AgentToolResult<IrabToolDetails>> {
 	const artifactDir = createArtifactDir(tool);
 	const artifacts = await artifactsFromRecords(tool, results, artifactDir, signal, timeoutMs);
-	const message = searchMessage(tool, query, results.length, artifacts.length, "live");
+	const message = searchMessage(tool, query, results.length, artifacts.length);
 	return buildToolResult(
 		{
 			mode: "live",
@@ -1600,37 +1513,10 @@ async function executeSearchTool(
 ): Promise<AgentToolResult<IrabToolDetails>> {
 	if (signal?.aborted) throw new Error("IRaB tool call aborted");
 
-	if (getToolMode() === "live") {
-		if (tool === "search_paipai") return liveSearchPaipai(params, signal);
-		if (tool === "search_global_data") return liveSearchGlobalData(params, signal);
-		if (tool === "search_cn_marketdata") return liveSearchCnMarketData(params, signal);
-		return liveSearchWeb(params, signal);
-	}
-
-	const fixtures = loadReplayFixtures();
-	const results = searchRecords(fixtures.records[tool] ?? [], params.query, params.limit);
-	const artifactDir = createArtifactDir(tool);
-	const artifacts = await artifactsFromRecords(
-		tool,
-		results,
-		artifactDir,
-		signal,
-		numberEnv("IRAB_TOOL_TIMEOUT_MS", DEFAULT_TIMEOUT_MS),
-	);
-	const message = searchMessage(tool, params.query, results.length, artifacts.length, "replay");
-
-	return buildToolResult(
-		{
-			mode: "replay",
-			tool,
-			query: params.query,
-			fixture_version: fixtures.version,
-			results,
-			artifact_dir: artifactDir,
-			message,
-		},
-		artifacts,
-	);
+	if (tool === "search_paipai") return liveSearchPaipai(params, signal);
+	if (tool === "search_global_data") return liveSearchGlobalData(params, signal);
+	if (tool === "search_cn_marketdata") return liveSearchCnMarketData(params, signal);
+	return liveSearchWeb(params, signal);
 }
 
 async function executeFetchWebTool(
@@ -1640,37 +1526,7 @@ async function executeFetchWebTool(
 ): Promise<AgentToolResult<IrabToolDetails>> {
 	if (signal?.aborted) throw new Error("IRaB tool call aborted");
 
-	if (getToolMode() === "live") {
-		return liveFetchWeb(url, format, signal);
-	}
-
-	const fixtures = loadReplayFixtures();
-	const results = allRecords(fixtures).filter((record) => record.url === url);
-	const artifactDir = createArtifactDir("fetch_web");
-	const artifacts = await artifactsFromRecords(
-		"fetch_web",
-		results,
-		artifactDir,
-		signal,
-		numberEnv("IRAB_TOOL_TIMEOUT_MS", DEFAULT_TIMEOUT_MS),
-	);
-	const message =
-		artifacts.length === 0
-			? "No replay fixture is available for this URL. Do not invent citations."
-			: "Read successful";
-
-	return buildToolResult(
-		{
-			mode: "replay",
-			tool: "fetch_web",
-			query: url,
-			fixture_version: fixtures.version,
-			results,
-			artifact_dir: artifactDir,
-			message,
-		},
-		artifacts,
-	);
+	return liveFetchWeb(url, format, signal);
 }
 
 const commonSearchParameters = {

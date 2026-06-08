@@ -44,8 +44,9 @@ The preferred implementation is:
 4. Normalize every tool response into a stable evidence format:
    `source_id`, `title`, `date`, `publisher`, `url`, `content`, `table`, and
    `metadata`.
-5. Record tool calls and normalized results so public benchmark examples can run
-   in replay mode without exposing private services.
+5. Keep live tool execution separate from reproducibility artifacts. Replay data
+   must be generated from recorded live runs only after an explicit sanitization
+   and export step.
 
 ## External Evaluation Access
 
@@ -54,14 +55,14 @@ or raw private data services.
 
 The preferred access model has three layers:
 
-1. Public replay mode: anyone can run the open-source harness against frozen
-   fixtures and mock tool responses.
-2. Controlled gateway mode: approved evaluators receive a short-lived,
+1. Controlled gateway mode: approved evaluators receive a short-lived,
    revocable IRaB gateway token after identity, organization, evaluation
    purpose, and model-scope review.
-3. Hosted evaluation mode: for high-trust leaderboard, vendor, or paper
+2. Hosted evaluation mode: for high-trust leaderboard, vendor, or paper
    collaborations, evaluators provide model endpoints, API keys, or containers,
    and IRaB runs the benchmark inside the project-controlled environment.
+3. Sanitized replay mode: public or external reproducibility runs use exported
+   fixtures created from raw live recordings after review and sanitization.
 
 Gateway tokens must never be raw internal DeepTask, PaiPai, database, search, or
 market-data credentials. They should only authorize calls through an IRaB
@@ -77,11 +78,46 @@ Evaluation Gateway with these controls:
 - Sensitive content redaction or summarized evidence output where full text
   export is not required.
 - One-step token revocation.
-- Record/replay support so live evaluation runs can be converted into frozen
-  reproducibility fixtures for reports.
+- Raw recording and sanitized replay export support so live evaluation runs can
+  be converted into reviewed reproducibility fixtures for reports.
 
-For public technical reports and reproducible artifacts, frozen replay fixtures
-are the default. Live gateway access is for controlled benchmarking only.
+Live gateway access is for controlled benchmarking only. Public technical
+reports and reproducible artifacts must use sanitized fixtures, not direct live
+recordings.
+
+## Recording and Sanitized Replay
+
+The current runtime does not ship static replay fixtures. Hand-authored replay
+data is not sufficient for benchmark reproducibility, and direct live-output
+replay can expose sensitive internal content.
+
+The target workflow is:
+
+1. Run live benchmark tasks against configured internal tools.
+2. Save raw recordings locally under ignored paths such as
+   `tmp/irab-recordings/raw/`. Raw recordings may include full tool responses,
+   normalized records, request parameters, source metadata, generated CSV files,
+   and image artifacts.
+3. Treat raw recordings as internal-only evidence. They must not be committed,
+   published, or sent to external evaluators.
+4. Run an explicit sanitization/export step that converts raw recordings into
+   reviewed replay fixtures.
+5. Use sanitized fixtures for public replay, external evaluation packages,
+   report reproduction, and CI regression tests.
+
+The sanitizer should apply a whitelist policy:
+
+- Replace internal URLs, article ids, request ids, account ids, user ids, and
+  organization names with stable synthetic identifiers such as `irab://...`.
+- Drop or redact `metadata.source_data` unless a field is explicitly approved.
+- Summarize, rewrite, or trim long proprietary text while preserving the factual
+  signal required by the benchmark task.
+- Limit table rows and columns to the minimal task-relevant subset.
+- Exclude CSV and image artifacts by default unless they pass manual review.
+- Add provenance metadata such as `sanitized: true`, raw recording hash, export
+  time, sanitizer version, and reviewer identity.
+- Preserve the visible `[source:x]` citation markers and the agent-visible tool
+  result shape so replay tests measure the same citation behavior.
 
 ## Citation Contract
 
@@ -100,7 +136,9 @@ All benchmark answers should cite evidence inline by copying the visible
 - Add baseline repo identity, spec, and citation prompt.
 - Implement an `irab-finance-tools` Pi extension with the five target tools.
 - Build a private HTTP tool gateway adapter.
-- Add record/replay mode for frozen benchmark fixtures.
+- Add raw live-run recording under ignored local paths.
+- Add a sanitizer/export pipeline for reviewed replay fixtures.
+- Add sanitized fixture replay only after the export contract is defined.
 - Add gateway-token access control for controlled external evaluation.
 - Add a small task set covering company research, market data, event tracking,
   and source reconciliation.
@@ -112,6 +150,8 @@ All benchmark answers should cite evidence inline by copying the visible
 
 - Do not open-source private databases, credentials, raw proprietary content, or
   internal DeepTask/PaiWork service code.
+- Do not commit raw live recordings or unsanitized tool outputs.
+- Do not treat hand-authored fixtures as authoritative benchmark replay data.
 - Do not fork Pi core unless the extension API cannot support a required
   benchmark behavior.
 - Do not make the first version a full financial research product. The target is
