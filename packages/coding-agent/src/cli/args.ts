@@ -61,6 +61,7 @@ export function isValidThinkingLevel(level: string): level is ThinkingLevel {
 
 export function parseArgs(args: string[]): Args {
 	const result: Args = {
+		noSkills: true,
 		messages: [],
 		fileArgs: [],
 		unknownFlags: new Map(),
@@ -153,6 +154,8 @@ export function parseArgs(args: string[]): Args {
 		} else if (arg === "--skill" && i + 1 < args.length) {
 			result.skills = result.skills ?? [];
 			result.skills.push(args[++i]);
+		} else if (arg === "--skills" || arg === "--with-skills") {
+			result.noSkills = false;
 		} else if (arg === "--prompt-template" && i + 1 < args.length) {
 			result.promptTemplates = result.promptTemplates ?? [];
 			result.promptTemplates.push(args[++i]);
@@ -257,7 +260,8 @@ ${chalk.bold("Options:")}
   --extension, -e <path>         Load an extension file (can be used multiple times)
   --no-extensions, -ne           Disable extension discovery (explicit -e paths still work)
   --skill <path>                 Load a skill file or directory (can be used multiple times)
-  --no-skills, -ns               Disable skills discovery and loading
+  --skills, --with-skills        Enable skill discovery (disabled by default)
+  --no-skills, -ns               Keep skill discovery disabled (explicit --skill paths still load)
   --prompt-template <path>       Load a prompt template file or directory (can be used multiple times)
   --no-prompt-templates, -np     Disable prompt template discovery and loading
   --theme <path>                 Load a theme file or directory (can be used multiple times)

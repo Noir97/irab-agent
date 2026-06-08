@@ -199,7 +199,8 @@ Built-in tools: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`.
 | `-e`, `--extension <source>` | Load an extension from path, npm, or git; repeatable |
 | `--no-extensions` | Disable extension discovery |
 | `--skill <path>` | Load a skill; repeatable |
-| `--no-skills` | Disable skill discovery |
+| `--skills`, `--with-skills` | Enable skill discovery |
+| `--no-skills` | Keep skill discovery disabled; explicit `--skill` paths still load |
 | `--prompt-template <path>` | Load a prompt template; repeatable |
 | `--no-prompt-templates` | Disable prompt template discovery |
 | `--theme <path>` | Load a theme; repeatable |

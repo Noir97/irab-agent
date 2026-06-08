@@ -261,9 +261,24 @@ describe("parseArgs", () => {
 	});
 
 	describe("--no-skills flag", () => {
+		test("defaults to disabling skill discovery", () => {
+			const result = parseArgs([]);
+			expect(result.noSkills).toBe(true);
+		});
+
 		test("parses --no-skills flag", () => {
 			const result = parseArgs(["--no-skills"]);
 			expect(result.noSkills).toBe(true);
+		});
+
+		test("parses --skills flag to enable skill discovery", () => {
+			const result = parseArgs(["--skills"]);
+			expect(result.noSkills).toBe(false);
+		});
+
+		test("parses --with-skills alias to enable skill discovery", () => {
+			const result = parseArgs(["--with-skills"]);
+			expect(result.noSkills).toBe(false);
 		});
 	});
 

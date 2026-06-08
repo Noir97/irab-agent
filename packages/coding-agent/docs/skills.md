@@ -38,7 +38,9 @@ Discovery rules:
 - In all skill locations, directories containing `SKILL.md` are discovered recursively
 - In `~/.agents/skills/` and project `.agents/skills/`, root `.md` files are ignored
 
-Disable discovery with `--no-skills` (explicit `--skill` paths still load).
+Skill discovery is disabled by default in this fork. Enable discovery with
+`--skills` or `--with-skills`; explicit `--skill` paths still load without
+discovery.
 
 ### Using Skills from Other Harnesses
 
