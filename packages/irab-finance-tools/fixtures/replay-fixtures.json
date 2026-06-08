@@ -1,0 +1,200 @@
+{
+	"version": 1,
+	"records": {
+		"search_paipai": [
+			{
+				"source_id": "paipai-byd-2025q4-margin-note",
+				"title": "BYD 2025 Q4 margin review",
+				"date": "2026-02-18",
+				"publisher": "PaiPai Research",
+				"url": "irab://paipai/research/byd-2025q4-margin-note",
+				"content": "The note attributes BYD's fourth-quarter gross margin improvement to battery cost reductions and a richer export mix, while warning that domestic price competition remains the main near-term risk.",
+				"table": {
+					"columns": ["metric", "2025_q3", "2025_q4", "comment"],
+					"rows": [
+						{
+							"metric": "gross_margin",
+							"2025_q3": "20.1%",
+							"2025_q4": "21.4%",
+							"comment": "Battery cost and export mix helped margin."
+						},
+						{
+							"metric": "export_share",
+							"2025_q3": "11.8%",
+							"2025_q4": "13.5%",
+							"comment": "Exports lifted blended ASP."
+						}
+					]
+				},
+				"metadata": {
+					"company": "BYD",
+					"ticker": "002594.SZ",
+					"source_type": "internal_research_note",
+					"topics": ["ev", "battery", "gross margin", "exports"]
+				}
+			},
+			{
+				"source_id": "paipai-tencent-2026-cloud-meeting",
+				"title": "Tencent cloud and advertising investor meeting notes",
+				"date": "2026-03-12",
+				"publisher": "PaiPai Meeting Notes",
+				"url": "irab://paipai/meetings/tencent-cloud-ad-2026-03-12",
+				"content": "Management commentary emphasized improving cloud gross margin, AI-related demand from enterprise customers, and stable advertising load growth. The note says capex discipline is still a key watch item.",
+				"table": null,
+				"metadata": {
+					"company": "Tencent",
+					"ticker": "0700.HK",
+					"source_type": "meeting_note",
+					"topics": ["cloud", "advertising", "AI demand", "capex"]
+				}
+			}
+		],
+		"search_global_data": [
+			{
+				"source_id": "global-aapl-close-2026-06-04",
+				"title": "Apple daily market snapshot",
+				"date": "2026-06-04",
+				"publisher": "IRaB Global Data Replay",
+				"url": "irab://global-data/equity/AAPL/2026-06-04",
+				"content": "AAPL closed at 202.87 USD on 2026-06-04. The replay snapshot records market capitalization of 3.02 trillion USD and trailing twelve-month revenue of 392.1 billion USD.",
+				"table": {
+					"columns": ["symbol", "close_usd", "market_cap_usd_trn", "ttm_revenue_usd_bn"],
+					"rows": [
+						{
+							"symbol": "AAPL",
+							"close_usd": 202.87,
+							"market_cap_usd_trn": 3.02,
+							"ttm_revenue_usd_bn": 392.1
+						}
+					]
+				},
+				"metadata": {
+					"asset_class": "equity",
+					"market": "US",
+					"symbol": "AAPL",
+					"currency": "USD"
+				}
+			},
+			{
+				"source_id": "global-hsi-snapshot-2026-06-04",
+				"title": "Hang Seng Index daily snapshot",
+				"date": "2026-06-04",
+				"publisher": "IRaB Global Data Replay",
+				"url": "irab://global-data/index/HSI/2026-06-04",
+				"content": "The Hang Seng Index closed at 19341.22 on 2026-06-04, up 0.6% on the day. Financials and internet platform shares were the largest positive sector contributors in the replay snapshot.",
+				"table": {
+					"columns": ["index", "close", "daily_change_pct", "top_positive_contributor"],
+					"rows": [
+						{
+							"index": "HSI",
+							"close": 19341.22,
+							"daily_change_pct": 0.6,
+							"top_positive_contributor": "internet platforms"
+						}
+					]
+				},
+				"metadata": {
+					"asset_class": "index",
+					"market": "Hong Kong",
+					"symbol": "HSI"
+				}
+			}
+		],
+		"search_cn_marketdata": [
+			{
+				"source_id": "cn-cpi-2026-05-replay",
+				"title": "China CPI and PPI replay snapshot",
+				"date": "2026-05-31",
+				"publisher": "IRaB China Market Data Replay",
+				"url": "irab://cn-marketdata/macro/cpi-ppi/2026-05",
+				"content": "The replay macro snapshot records China headline CPI at 0.4% year over year and PPI at -1.2% year over year for May 2026. Food prices were the main CPI drag while services inflation stayed positive.",
+				"table": {
+					"columns": ["indicator", "period", "value_yoy_pct", "note"],
+					"rows": [
+						{
+							"indicator": "CPI",
+							"period": "2026-05",
+							"value_yoy_pct": 0.4,
+							"note": "Food prices dragged headline CPI."
+						},
+						{
+							"indicator": "PPI",
+							"period": "2026-05",
+							"value_yoy_pct": -1.2,
+							"note": "Industrial deflation narrowed modestly."
+						}
+					]
+				},
+				"metadata": {
+					"region": "China",
+					"category": "macro",
+					"indicators": ["CPI", "PPI"]
+				}
+			},
+			{
+				"source_id": "cn-csi300-2026-06-04",
+				"title": "CSI 300 daily replay snapshot",
+				"date": "2026-06-04",
+				"publisher": "IRaB China Market Data Replay",
+				"url": "irab://cn-marketdata/index/CSI300/2026-06-04",
+				"content": "The CSI 300 closed at 3718.64 on 2026-06-04, up 0.4% on the day. The replay snapshot identifies consumer staples and banks as leading sector contributors.",
+				"table": {
+					"columns": ["index", "close", "daily_change_pct", "leading_sectors"],
+					"rows": [
+						{
+							"index": "CSI300",
+							"close": 3718.64,
+							"daily_change_pct": 0.4,
+							"leading_sectors": "consumer staples, banks"
+						}
+					]
+				},
+				"metadata": {
+					"region": "China",
+					"category": "index",
+					"symbol": "CSI300"
+				}
+			}
+		],
+		"search_web": [
+			{
+				"source_id": "web-sec-aapl-10q-2026q2",
+				"title": "Apple Form 10-Q replay excerpt",
+				"date": "2026-05-02",
+				"publisher": "SEC EDGAR Replay",
+				"url": "https://www.sec.gov/Archives/edgar/data/320193/replay/aapl-2026q2-10q.htm",
+				"content": "The replay excerpt says Apple reported net sales of 95.4 billion USD for the quarter ended March 28, 2026, with services revenue growing faster than product revenue.",
+				"table": {
+					"columns": ["period", "net_sales_usd_bn", "services_growth_comment"],
+					"rows": [
+						{
+							"period": "quarter ended 2026-03-28",
+							"net_sales_usd_bn": 95.4,
+							"services_growth_comment": "services grew faster than products"
+						}
+					]
+				},
+				"metadata": {
+					"source_type": "filing",
+					"company": "Apple",
+					"ticker": "AAPL"
+				}
+			},
+			{
+				"source_id": "web-pboc-policy-2026-05",
+				"title": "PBOC monetary policy replay excerpt",
+				"date": "2026-05-20",
+				"publisher": "PBOC Replay",
+				"url": "https://www.pbc.gov.cn/replay/monetary-policy-2026-05.html",
+				"content": "The replay excerpt says the central bank emphasized keeping liquidity reasonably ample and guiding financing costs lower for the real economy.",
+				"table": null,
+				"metadata": {
+					"source_type": "public_policy_statement",
+					"region": "China",
+					"topics": ["monetary policy", "liquidity", "financing costs"]
+				}
+			}
+		]
+	}
+}
+
