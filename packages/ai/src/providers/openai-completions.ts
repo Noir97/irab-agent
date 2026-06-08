@@ -502,16 +502,17 @@ function buildParams(
 ) {
 	const messages = convertMessages(model, context, compat);
 	const cacheControl = getCompatCacheControl(compat, cacheRetention);
+	const shouldSendPromptCacheKey =
+		cacheRetention !== "none" &&
+		(model.baseUrl.includes("api.openai.com") ||
+			compat.sendPromptCacheKey ||
+			(cacheRetention === "long" && compat.supportsLongCacheRetention));
 
 	const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
 		model: model.id,
 		messages,
 		stream: true,
-		prompt_cache_key:
-			(model.baseUrl.includes("api.openai.com") && cacheRetention !== "none") ||
-			(cacheRetention === "long" && compat.supportsLongCacheRetention)
-				? clampOpenAIPromptCacheKey(options?.sessionId)
-				: undefined,
+		prompt_cache_key: shouldSendPromptCacheKey ? clampOpenAIPromptCacheKey(options?.sessionId) : undefined,
 		prompt_cache_retention: cacheRetention === "long" && compat.supportsLongCacheRetention ? "24h" : undefined,
 	};
 
@@ -1143,6 +1144,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		zaiToolStream: false,
 		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia,
 		cacheControlFormat,
+		sendPromptCacheKey: false,
 		sendSessionAffinityHeaders: false,
 		supportsLongCacheRetention: !(
 			isTogether ||
@@ -1181,6 +1183,7 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 		zaiToolStream: model.compat.zaiToolStream ?? detected.zaiToolStream,
 		supportsStrictMode: model.compat.supportsStrictMode ?? detected.supportsStrictMode,
 		cacheControlFormat: model.compat.cacheControlFormat ?? detected.cacheControlFormat,
+		sendPromptCacheKey: model.compat.sendPromptCacheKey ?? detected.sendPromptCacheKey,
 		sendSessionAffinityHeaders: model.compat.sendSessionAffinityHeaders ?? detected.sendSessionAffinityHeaders,
 		supportsLongCacheRetention: model.compat.supportsLongCacheRetention ?? detected.supportsLongCacheRetention,
 	};

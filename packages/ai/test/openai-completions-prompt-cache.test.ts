@@ -150,6 +150,20 @@ describe("openai-completions prompt caching", () => {
 		expect(payload?.prompt_cache_retention).toBeUndefined();
 	});
 
+	it("sets prompt_cache_key for compatible proxy models when short caching is enabled", async () => {
+		const model = createModel({
+			baseUrl: "https://proxy.example.com/v1",
+			compat: {
+				sendPromptCacheKey: true,
+				supportsLongCacheRetention: false,
+			},
+		});
+		const { payload } = await captureRequest({ sessionId: "session-proxy-key" }, model);
+
+		expect(payload?.prompt_cache_key).toBe("session-proxy-key");
+		expect(payload?.prompt_cache_retention).toBeUndefined();
+	});
+
 	it("uses PI_CACHE_RETENTION for direct OpenAI requests", async () => {
 		process.env.PI_CACHE_RETENTION = "long";
 		const { payload } = await captureRequest({ sessionId: "session-env" });

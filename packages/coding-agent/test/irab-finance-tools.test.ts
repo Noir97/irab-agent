@@ -50,6 +50,27 @@ function irabDetails(result: AgentToolResult<unknown>): IrabToolDetailsForTest {
 	return result.details as IrabToolDetailsForTest;
 }
 
+const requestedRabyteModelIds = [
+	"kimi-k2.6-thinking",
+	"openrouter-mimo-v2.5-pro",
+	"wangsu-claude-opus-4-6",
+	"openrouter-deepseek-v4-pro",
+	"glm-5.1-thinking",
+	"wangsu-gpt-5.5",
+	"ucloud-claude-opus-4-8",
+	"qwen3.7-max",
+	"wangsu-gemini-3.5-flash",
+	"openrouter-minimax-m3",
+];
+
+const deepTaskReasoningReplayModelIds = [
+	"kimi-k2.6-thinking",
+	"openrouter-mimo-v2.5-pro",
+	"openrouter-deepseek-v4-pro",
+	"glm-5.1-thinking",
+	"qwen3.7-max",
+];
+
 describe("IRaB finance tools extension", () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
@@ -74,15 +95,40 @@ describe("IRaB finance tools extension", () => {
 	it("registers the Rabyte provider with DeepTask models", async () => {
 		const { providers } = registerIrabExtension();
 		const provider = providers.get("rabyte");
+		const models = provider?.models ?? [];
 
 		expect(provider).toMatchObject({
 			api: "openai-completions",
 			apiKey: "$IRAB_RABYTE_API_KEY",
 			baseUrl: "https://test-llm.rabyte.cn/v1",
 		});
-		expect(provider?.models?.map((model) => model.id)).toEqual(
-			expect.arrayContaining(["wangsu-claude-opus-4-6", "kimi-k2.6-thinking", "rabyte-gpt-5.4"]),
-		);
+		expect(models.map((model) => model.id)).toEqual(expect.arrayContaining(requestedRabyteModelIds));
+		for (const modelId of deepTaskReasoningReplayModelIds) {
+			expect(models.find((model) => model.id === modelId)?.compat).toMatchObject({
+				requiresReasoningContentOnAssistantMessages: true,
+			});
+		}
+		expect(models.find((model) => model.id === "kimi-k2.6-thinking")?.compat).toMatchObject({
+			sendPromptCacheKey: true,
+		});
+		expect(models.find((model) => model.id === "wangsu-gpt-5.5")?.compat).toMatchObject({
+			sendPromptCacheKey: true,
+		});
+		expect(models.find((model) => model.id === "ucloud-claude-opus-4-8")?.compat).toMatchObject({
+			cacheControlFormat: "anthropic",
+		});
+		expect(models.find((model) => model.id === "openrouter-deepseek-v4-pro")?.compat).toMatchObject({
+			requiresReasoningContentOnAssistantMessages: true,
+			thinkingFormat: "openrouter",
+		});
+		expect(models.find((model) => model.id === "glm-5.1-thinking")?.compat).toMatchObject({
+			thinkingFormat: "zai",
+		});
+		expect(models.find((model) => model.id === "qwen3.7-max")?.compat).toMatchObject({
+			cacheControlFormat: "anthropic",
+			requiresReasoningContentOnAssistantMessages: true,
+			thinkingFormat: "qwen",
+		});
 	});
 
 	it("returns numbered replay source artifacts", async () => {

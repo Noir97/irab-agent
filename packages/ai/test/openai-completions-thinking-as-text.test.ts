@@ -37,6 +37,7 @@ const compat = {
 	zaiToolStream: false,
 	supportsStrictMode: true,
 	cacheControlFormat: undefined,
+	sendPromptCacheKey: false,
 	sendSessionAffinityHeaders: false,
 	supportsLongCacheRetention: true,
 } satisfies Required<Omit<OpenAICompletionsCompat, "cacheControlFormat">> & {

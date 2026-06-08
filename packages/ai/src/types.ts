@@ -413,6 +413,8 @@ export interface OpenAICompletionsCompat {
 	supportsStrictMode?: boolean;
 	/** Cache control convention for prompt caching. "anthropic" applies Anthropic-style `cache_control` markers to the system prompt, last tool definition, and last user/assistant text content. */
 	cacheControlFormat?: "anthropic";
+	/** Whether to send `prompt_cache_key` from `options.sessionId` for non-OpenAI proxy endpoints when caching is enabled. Default: false. */
+	sendPromptCacheKey?: boolean;
 	/** Whether to send known session-affinity headers (`session_id`, `x-client-request-id`, `x-session-affinity`) from `options.sessionId` when caching is enabled. Default: false. */
 	sendSessionAffinityHeaders?: boolean;
 	/** Whether the provider supports long prompt cache retention (`prompt_cache_retention: "24h"` or Anthropic-style `cache_control.ttl: "1h"`, depending on format). Default: true. */

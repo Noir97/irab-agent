@@ -1066,6 +1066,7 @@ describe("openai-completions tool_choice", () => {
 				vercelGatewayRouting: {},
 				zaiToolStream: false,
 				supportsStrictMode: true,
+				sendPromptCacheKey: false,
 				sendSessionAffinityHeaders: false,
 				supportsLongCacheRetention: true,
 			},
