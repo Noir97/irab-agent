@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import irabFinanceToolsExtension from "../../../packages/irab-finance-tools/src/index.ts";
@@ -7,16 +6,6 @@ import type { ExtensionAPI, ExtensionContext, ProviderConfig, ToolDefinition } f
 type RegisteredIrabExtension = {
 	providers: Map<string, ProviderConfig>;
 	tools: Map<string, ToolDefinition>;
-};
-
-type IrabToolDetailsForTest = {
-	artifact_dir?: string;
-	artifacts: {
-		type: string;
-		label: string;
-		source: string;
-		file_path?: string;
-	}[];
 };
 
 function registerIrabExtension(): RegisteredIrabExtension {
@@ -45,10 +34,6 @@ function textFromToolResult(result: AgentToolResult<unknown>): string {
 	return first.text;
 }
 
-function irabDetails(result: AgentToolResult<unknown>): IrabToolDetailsForTest {
-	return result.details as IrabToolDetailsForTest;
-}
-
 const requestedRabyteModelIds = [
 	"kimi-k2.6-thinking",
 	"openrouter-mimo-v2.5-pro",
@@ -70,31 +55,7 @@ const deepTaskReasoningReplayModelIds = [
 	"qwen3.7-max",
 ];
 
-const irabEnvKeys = [
-	"IRAB_TOKEN",
-	"IRAB_GATEWAY_URL",
-	"IRAB_RABYTE_BASE_URL",
-	"IRAB_RABYTE_OPENAI_BASE_URL",
-	"IRAB_RABYTE_API_KEY",
-	"IRAB_PAIPAI_BASE_URL",
-	"IRAB_GLOBAL_DATA_BASE_URL",
-	"IRAB_WEBSEARCH_SERVICE_URL",
-	"IRAB_XIAOSU_READER_URL",
-	"IRAB_XIAOSU_READER_OVERSEAS_URL",
-	"IRAB_XIAOSU_READER_ACCESS_KEY",
-	"RABYTE_BASE_URL",
-	"RABYTE_OPENAI_BASE_URL",
-	"RABYTE_API_KEY",
-	"PAIPAI_BASE_URL",
-	"PAIPAI_API_KEY",
-	"PAIPAI_APP_AGENT",
-	"PAIPAI_SIGN",
-	"GLOBAL_DATA_BASE_URL",
-	"WEBSEARCH_SERVICE_URL",
-	"XIAOSU_READER_URL",
-	"XIAOSU_READER_OVERSEAS_URL",
-	"XIAOSU_READER_ACCESS_KEY",
-];
+const irabEnvKeys = ["IRAB_TOKEN", "IRAB_GATEWAY_URL", "IRAB_TOOL_TIMEOUT_MS", "IRAB_ARTIFACT_DIR"];
 
 function clearIrabEnv(): void {
 	for (const key of irabEnvKeys) {
@@ -131,8 +92,9 @@ describe("IRaB finance tools extension", () => {
 
 		expect(provider).toMatchObject({
 			api: "openai-completions",
-			apiKey: "$IRAB_RABYTE_API_KEY",
-			baseUrl: "https://test-llm.rabyte.cn/v1",
+			apiKey: "$IRAB_TOKEN",
+			baseUrl: "https://test-llm.rabyte.cn/irab/v1",
+			name: "IRaB Gateway",
 		});
 		expect(models.map((model) => model.id)).toEqual(expect.arrayContaining(requestedRabyteModelIds));
 		for (const modelId of deepTaskReasoningReplayModelIds) {
@@ -163,15 +125,15 @@ describe("IRaB finance tools extension", () => {
 		});
 	});
 
-	it("uses IRAB_TOKEN for the hosted gateway provider", async () => {
-		process.env.IRAB_TOKEN = "irab_test";
+	it("uses IRAB_GATEWAY_URL when configured", async () => {
+		process.env.IRAB_GATEWAY_URL = "https://gateway.test/irab";
 		const { providers } = registerIrabExtension();
 		const provider = providers.get("rabyte");
 
 		expect(provider).toMatchObject({
 			api: "openai-completions",
 			apiKey: "$IRAB_TOKEN",
-			baseUrl: "https://test-llm.rabyte.cn/irab/v1",
+			baseUrl: "https://gateway.test/irab/v1",
 			name: "IRaB Gateway",
 		});
 	});
@@ -237,218 +199,5 @@ describe("IRaB finance tools extension", () => {
 			endpoint: "https://gateway.test/irab/v1/tools/search_paipai",
 			recording_id: "rec_1",
 		});
-	});
-
-	it("serializes live PaiPai results as numbered source artifacts", async () => {
-		const { tools } = registerIrabExtension();
-		process.env.IRAB_PAIPAI_BASE_URL = "https://paipai.test";
-		vi.stubGlobal(
-			"fetch",
-			async () =>
-				new Response(
-					JSON.stringify({
-						data: [
-							{
-								id: "paipai-byd-margin",
-								title: "BYD 2025 Q4 margin review",
-								content:
-									"BYD's fourth-quarter gross margin improvement came from battery cost reductions and a richer export mix.",
-								publish_time: "2026-02-18",
-								source: "PaiPai Research",
-							},
-						],
-					}),
-					{ status: 200 },
-				),
-		);
-		const tool = getOnlyExtensionTool(tools, "search_paipai");
-
-		const toolResult = await tool.execute(
-			"call_1",
-			{ query: "BYD battery margin", limit: 1 },
-			undefined,
-			undefined,
-			{} as ExtensionContext,
-		);
-		const text = textFromToolResult(toolResult);
-
-		expect(text).toContain("Found 1 item");
-		expect(text).toContain("[source:");
-		expect(text).not.toContain("[Reference");
-		expect(text).toContain("BYD's fourth-quarter gross margin improvement");
-		expect(text).not.toContain("citation_contract");
-		expect(toolResult.details).toMatchObject({
-			mode: "live",
-			tool: "search_paipai",
-			query: "BYD battery margin",
-			endpoint: "https://paipai.test/paipai_data",
-		});
-		expect(irabDetails(toolResult).artifacts[0]).toMatchObject({
-			type: "text",
-			source: "search_paipai",
-		});
-	});
-
-	it("stores live global-data table artifacts as CSV files", async () => {
-		const { tools } = registerIrabExtension();
-		process.env.IRAB_GLOBAL_DATA_BASE_URL = "https://global-data.test";
-		vi.stubGlobal(
-			"fetch",
-			async () =>
-				new Response(
-					JSON.stringify({
-						data: [
-							{
-								chunks:
-									"| symbol | date | marketCap |\n| --- | --- | --- |\n| AAPL | 2026-06-05 | 4514011993040 |",
-								indic_names: ["Apple daily market snapshot"],
-							},
-						],
-					}),
-					{ status: 200 },
-				),
-		);
-		const tool = getOnlyExtensionTool(tools, "search_global_data");
-
-		const toolResult = await tool.execute(
-			"call_2",
-			{ query: "Apple daily market snapshot", limit: 1 },
-			undefined,
-			undefined,
-			{} as ExtensionContext,
-		);
-		const text = textFromToolResult(toolResult);
-		const details = irabDetails(toolResult);
-		const filePath = details.artifacts[0]?.file_path;
-
-		expect(text).toContain("[source:");
-		expect(text).not.toContain("[Table");
-		expect(text).toContain("Data preview:");
-		expect(text).toContain("File:");
-		expect(text).toContain("AAPL");
-		expect(filePath).toBeTruthy();
-		expect(existsSync(filePath ?? "")).toBe(true);
-		expect(details.artifact_dir).toBeTruthy();
-	});
-
-	it("serializes live CN marketdata chunks as table previews", async () => {
-		const { tools } = registerIrabExtension();
-		process.env.IRAB_PAIPAI_BASE_URL = "https://paipai.test";
-		vi.stubGlobal(
-			"fetch",
-			async () =>
-				new Response(
-					JSON.stringify({
-						data: [
-							{
-								id: "cn-cpi-1",
-								content: "China CPI inflation latest data 2025",
-								chunks:
-									"| 统计日期 | 指标 | 最新值 |\n| --- | --- | --- |\n| 2025-05 | CPI | 0.3 |\n| 2025-06 | CPI | 0.4 |",
-								indic_names: ["China CPI"],
-								orig_inst_source: ["National Bureau"],
-							},
-						],
-					}),
-					{ status: 200 },
-				),
-		);
-		const tool = getOnlyExtensionTool(tools, "search_cn_marketdata");
-
-		const toolResult = await tool.execute(
-			"call_cn_marketdata",
-			{ query: "China CPI inflation latest data 2025", limit: 1 },
-			undefined,
-			undefined,
-			{} as ExtensionContext,
-		);
-		const text = textFromToolResult(toolResult);
-
-		expect(text).toContain("Got 1 table");
-		expect(text).toContain("[source:");
-		expect(text).toContain("Data preview:");
-		expect(text).toContain("2025-06");
-		expect(text).toContain("2025-05");
-		expect(text.indexOf("2025-06")).toBeLessThan(text.indexOf("2025-05"));
-		expect(text).not.toMatch(/\[source:\d+\]China CPI inflation latest data 2025/u);
-		expect(irabDetails(toolResult).artifacts[0]).toMatchObject({
-			type: "table",
-			source: "search_cn_marketdata",
-		});
-	});
-
-	it("fetches a URL as a numbered reference artifact", async () => {
-		const { tools } = registerIrabExtension();
-		process.env.IRAB_XIAOSU_READER_URL = "";
-		process.env.IRAB_XIAOSU_READER_OVERSEAS_URL = "";
-		process.env.IRAB_XIAOSU_READER_ACCESS_KEY = "";
-		vi.stubGlobal(
-			"fetch",
-			async () =>
-				new Response("Apple reported net sales of 95.4 billion USD for the quarter ended March 28, 2026.", {
-					status: 200,
-				}),
-		);
-		const tool = getOnlyExtensionTool(tools, "fetch_web");
-
-		const toolResult = await tool.execute(
-			"call_3",
-			{ url: "https://www.sec.gov/Archives/edgar/data/320193/aapl-2026q2-10q.htm" },
-			undefined,
-			undefined,
-			{} as ExtensionContext,
-		);
-		const text = textFromToolResult(toolResult);
-
-		expect(text).toContain("Read successful");
-		expect(text).toContain("[source:");
-		expect(text).not.toContain("[Reference");
-		expect(text).toContain("Apple reported net sales");
-	});
-
-	it("serializes live web search snippets without full page content", async () => {
-		const { tools } = registerIrabExtension();
-		process.env.IRAB_WEBSEARCH_SERVICE_URL = "https://web-search.test";
-		vi.stubGlobal(
-			"fetch",
-			async () =>
-				new Response(
-					JSON.stringify({
-						results: [
-							{
-								query: "market selloff",
-								webpages: [
-									{
-										title: "Markets face triple threat",
-										snippet: "Stocks fell as AI shares sold off and oil prices rose.",
-										content: "FULL PAGE BODY Trendingnow Lorem ipsum repeated boilerplate",
-										link: "https://fortune.example/markets",
-										date: "2026-06-08",
-										authors: ["Jason Ma"],
-										site_name: "Fortune",
-									},
-								],
-							},
-						],
-					}),
-					{ status: 200 },
-				),
-		);
-		const tool = getOnlyExtensionTool(tools, "search_web");
-
-		const toolResult = await tool.execute(
-			"call_4",
-			{ query: "market selloff", limit: 1 },
-			undefined,
-			undefined,
-			{} as ExtensionContext,
-		);
-		const text = textFromToolResult(toolResult);
-
-		expect(text).toContain("[source:");
-		expect(text).not.toContain("[Reference");
-		expect(text).toContain("Stocks fell as AI shares sold off and oil prices rose.");
-		expect(text).not.toContain("FULL PAGE BODY");
-		expect(text).not.toContain("Trendingnow");
 	});
 });

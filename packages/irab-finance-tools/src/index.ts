@@ -36,7 +36,7 @@ type EvidenceRecord = {
 };
 
 type IrabToolDetails = {
-	mode: "gateway" | "live";
+	mode: "gateway";
 	tool: IrabToolName;
 	query: string;
 	results: EvidenceRecord[];
@@ -116,19 +116,6 @@ type SearchExecutionParams = {
 	include_domains?: string[];
 	exclude_domains?: string[];
 	user_id?: string;
-};
-
-type LiveConfig = {
-	paipaiBaseUrl: string;
-	paipaiApiKey: string;
-	paipaiAppAgent: string;
-	paipaiSign: string;
-	globalDataBaseUrl: string;
-	websearchServiceUrl: string;
-	xiaosuReaderUrl: string;
-	xiaosuReaderOverseasUrl: string;
-	xiaosuReaderAccessKey: string;
-	toolTimeoutMs: number;
 };
 
 type GatewayConfig = {
@@ -314,18 +301,10 @@ function env(name: string, fallback = ""): string {
 	return process.env[name]?.trim() || fallback;
 }
 
-function sourceEnv(primary: string, fallback: string): string {
-	return env(primary, env(fallback));
-}
-
 function openAIBaseUrl(baseUrl: string): string {
 	const trimmed = baseUrl.trim().replace(/\/+$/u, "");
 	if (trimmed.endsWith("/v1")) return trimmed;
 	return `${trimmed}/v1`;
-}
-
-function gatewayConfigured(): boolean {
-	return Boolean(env("IRAB_TOKEN"));
 }
 
 function gatewayBaseUrl(): string {
@@ -333,17 +312,10 @@ function gatewayBaseUrl(): string {
 }
 
 function registerRabyteProvider(pi: ExtensionAPI): void {
-	const baseUrl = gatewayConfigured()
-		? openAIBaseUrl(gatewayBaseUrl())
-		: openAIBaseUrl(
-				sourceEnv("RABYTE_OPENAI_BASE_URL", "IRAB_RABYTE_OPENAI_BASE_URL") ||
-					sourceEnv("RABYTE_BASE_URL", "IRAB_RABYTE_BASE_URL") ||
-					DEFAULT_RABYTE_BASE_URL,
-			);
 	pi.registerProvider("rabyte", {
-		name: gatewayConfigured() ? "IRaB Gateway" : "Rabyte",
-		baseUrl,
-		apiKey: gatewayConfigured() ? "$IRAB_TOKEN" : env("RABYTE_API_KEY") ? "$RABYTE_API_KEY" : "$IRAB_RABYTE_API_KEY",
+		name: "IRaB Gateway",
+		baseUrl: openAIBaseUrl(gatewayBaseUrl()),
+		apiKey: "$IRAB_TOKEN",
 		api: "openai-completions",
 		models: rabyteModels,
 	});
@@ -353,21 +325,6 @@ function numberEnv(name: string, fallback: number): number {
 	const value = Number(env(name));
 	if (!Number.isFinite(value) || value <= 0) return fallback;
 	return value;
-}
-
-function liveConfig(): LiveConfig {
-	return {
-		paipaiBaseUrl: sourceEnv("PAIPAI_BASE_URL", "IRAB_PAIPAI_BASE_URL"),
-		paipaiApiKey: sourceEnv("PAIPAI_API_KEY", "IRAB_PAIPAI_API_KEY"),
-		paipaiAppAgent: sourceEnv("PAIPAI_APP_AGENT", "IRAB_PAIPAI_APP_AGENT"),
-		paipaiSign: sourceEnv("PAIPAI_SIGN", "IRAB_PAIPAI_SIGN"),
-		globalDataBaseUrl: sourceEnv("GLOBAL_DATA_BASE_URL", "IRAB_GLOBAL_DATA_BASE_URL"),
-		websearchServiceUrl: sourceEnv("WEBSEARCH_SERVICE_URL", "IRAB_WEBSEARCH_SERVICE_URL"),
-		xiaosuReaderUrl: sourceEnv("XIAOSU_READER_URL", "IRAB_XIAOSU_READER_URL"),
-		xiaosuReaderOverseasUrl: sourceEnv("XIAOSU_READER_OVERSEAS_URL", "IRAB_XIAOSU_READER_OVERSEAS_URL"),
-		xiaosuReaderAccessKey: sourceEnv("XIAOSU_READER_ACCESS_KEY", "IRAB_XIAOSU_READER_ACCESS_KEY"),
-		toolTimeoutMs: numberEnv("IRAB_TOOL_TIMEOUT_MS", DEFAULT_TIMEOUT_MS),
-	};
 }
 
 function gatewayConfig(): GatewayConfig {
@@ -1372,165 +1329,12 @@ async function gatewayFetchWeb(
 	);
 }
 
-async function fetchText(
-	url: string,
-	signal: AbortSignal | undefined,
-	timeoutMs: number,
-): Promise<{ status: number; text: string }> {
-	const controller = new AbortController();
-	const abort = () => controller.abort(signal?.reason);
-	const timeout = setTimeout(() => controller.abort(new Error(`Request timed out after ${timeoutMs}ms`)), timeoutMs);
-	if (signal?.aborted) abort();
-	signal?.addEventListener("abort", abort, { once: true });
-
-	try {
-		const response = await fetch(url, {
-			headers: { Accept: "text/html,text/plain,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" },
-			signal: controller.signal,
-		});
-		const text = await response.text();
-		if (!response.ok) {
-			throw new Error(`HTTP ${response.status} from ${url}: ${text.slice(0, 300)}`);
-		}
-		return { status: response.status, text };
-	} finally {
-		clearTimeout(timeout);
-		signal?.removeEventListener("abort", abort);
-	}
-}
-
-function paipaiDate(value: string | undefined, endOfDay: boolean): string | undefined {
-	if (!value) return undefined;
-	if (/\d\d:\d\d:\d\d/u.test(value)) return value;
-	return `${value} ${endOfDay ? "23:59:59" : "00:00:00"}`;
-}
-
-function searchHeaders(config: LiveConfig): Record<string, string> {
-	const headers: Record<string, string> = {};
-	if (config.paipaiAppAgent) headers["app-agent"] = config.paipaiAppAgent;
-	if (config.paipaiSign) headers.sign = config.paipaiSign;
-	if (config.paipaiApiKey) headers.Authorization = config.paipaiApiKey;
-	return headers;
-}
-
-async function liveSearchPaipai(
-	params: SearchExecutionParams,
-	signal: AbortSignal | undefined,
-): Promise<AgentToolResult<IrabToolDetails>> {
-	const config = liveConfig();
-	const endpoint = joinUrl(requireConfig(config.paipaiBaseUrl, "PAIPAI_BASE_URL"), "/paipai_data");
-	const limit = normalizeLimit(params.limit);
-	const response = await postJson(
-		endpoint,
-		{
-			userId: params.user_id ?? env("IRAB_PAIPAI_USER_ID", "irab-agent"),
-			query: params.query,
-			article_type: params.sources ?? [],
-			isCutOff: true,
-			slot_num: limit,
-			web_search: false,
-			start_time: paipaiDate(params.start_time, false),
-			end_time: paipaiDate(params.end_time, true),
-			skip_bm25_rank: true,
-			skip_query_expansion: true,
-			skip_entity_filter: true,
-			skip_es_recall: false,
-			needSourceData: true,
-			needHighlightsExtra: true,
-			referenceRangeList: [],
-			subscribeAccountIdList: [],
-		},
-		searchHeaders(config),
-		signal,
-		config.toolTimeoutMs,
-	);
-	const results = normalizePayloadRecords("paipai", response.payload, limit);
-	return buildSearchResult("live", "search_paipai", params.query, endpoint, results, signal, config.toolTimeoutMs);
-}
-
-async function liveSearchGlobalData(
-	params: SearchExecutionParams,
-	signal: AbortSignal | undefined,
-): Promise<AgentToolResult<IrabToolDetails>> {
-	const config = liveConfig();
-	const endpoint = joinUrl(requireConfig(config.globalDataBaseUrl, "GLOBAL_DATA_BASE_URL"), "/global/stable/query");
-	const response = await postJson(endpoint, { query: params.query }, {}, signal, config.toolTimeoutMs);
-	const results = normalizeGlobalDataRecords(response.payload, params.query);
-	return buildSearchResult(
-		"live",
-		"search_global_data",
-		params.query,
-		endpoint,
-		results,
-		signal,
-		config.toolTimeoutMs,
-	);
-}
-
-async function liveSearchCnMarketData(
-	params: SearchExecutionParams,
-	signal: AbortSignal | undefined,
-): Promise<AgentToolResult<IrabToolDetails>> {
-	const config = liveConfig();
-	const endpoint = joinUrl(requireConfig(config.paipaiBaseUrl, "PAIPAI_BASE_URL"), "/edb/simple_data");
-	const limit = normalizeLimit(params.limit);
-	const timeoutSecs = Math.ceil(config.toolTimeoutMs / 1000);
-	const response = await postJson(
-		endpoint,
-		{
-			query: params.query,
-			top_k: limit,
-			timeout_expand: Math.max(1, Math.floor(timeoutSecs / 2)),
-			timeout_total: timeoutSecs,
-		},
-		{},
-		signal,
-		config.toolTimeoutMs,
-	);
-	const results = normalizeSimpleDataRecords(response.payload, params.query);
-	return buildSearchResult(
-		"live",
-		"search_cn_marketdata",
-		params.query,
-		endpoint,
-		results,
-		signal,
-		config.toolTimeoutMs,
-	);
-}
-
-async function liveSearchWeb(
-	params: SearchExecutionParams,
-	signal: AbortSignal | undefined,
-): Promise<AgentToolResult<IrabToolDetails>> {
-	const config = liveConfig();
-	const endpoint = joinUrl(requireConfig(config.websearchServiceUrl, "WEBSEARCH_SERVICE_URL"), "/v1/search");
-	const limit = normalizeLimit(params.limit);
-	const response = await postJson(
-		endpoint,
-		{
-			queries: [params.query],
-			count: limit,
-			caller_id: "irab-agent",
-			start_time: params.start_time,
-			end_time: params.end_time,
-			include_domains: params.include_domains,
-			exclude_domains: params.exclude_domains,
-		},
-		{},
-		signal,
-		config.toolTimeoutMs,
-	);
-	const results = normalizeWebRecords(response.payload, limit);
-	return buildSearchResult("live", "search_web", params.query, endpoint, results, signal, config.toolTimeoutMs);
-}
-
 function searchMessage(
 	tool: IrabSearchToolName,
 	query: string,
 	recordCount: number,
 	artifactCount: number,
-	mode: "gateway" | "live",
+	mode: "gateway",
 ): string | undefined {
 	if (artifactCount === 0) {
 		return `No ${mode} evidence matched "${query}". Do not invent citations.`;
@@ -1544,7 +1348,7 @@ function searchMessage(
 }
 
 async function buildSearchResult(
-	mode: "gateway" | "live",
+	mode: "gateway",
 	tool: IrabSearchToolName,
 	query: string,
 	endpoint: string,
@@ -1576,106 +1380,6 @@ function fetchFormat(value: string | undefined): "text" | "html" {
 	return value === "html" ? "html" : "text";
 }
 
-function isPdfUrl(url: string): boolean {
-	return /\.pdf(?:$|[?#])/iu.test(url);
-}
-
-function readerEndpoint(config: LiveConfig): string {
-	return config.xiaosuReaderUrl || config.xiaosuReaderOverseasUrl;
-}
-
-function evidenceFromFetchedContent(
-	url: string,
-	content: string,
-	metadata: Record<string, unknown>,
-	status: number,
-): EvidenceRecord {
-	return {
-		source_id: normalizeSourceId("web-fetch", url, 0),
-		title: firstString(metadata.title, url),
-		date: "",
-		publisher: firstString(metadata.reader_type, "web"),
-		url,
-		content: truncateContent(content),
-		table: parseMarkdownTable(content),
-		metadata: { ...metadata, status },
-	};
-}
-
-async function liveFetchWeb(
-	url: string,
-	format: "text" | "html",
-	signal: AbortSignal | undefined,
-): Promise<AgentToolResult<IrabToolDetails>> {
-	const config = liveConfig();
-	const endpoint = readerEndpoint(config);
-	if (!endpoint || !config.xiaosuReaderAccessKey) {
-		const response = await fetchText(url, signal, config.toolTimeoutMs);
-		const artifactDir = createArtifactDir("fetch_web");
-		const results = [
-			evidenceFromFetchedContent(url, response.text, { reader_type: "direct_fetch" }, response.status),
-		];
-		const artifacts = await artifactsFromRecords("fetch_web", results, artifactDir, signal, config.toolTimeoutMs);
-		return buildToolResult(
-			{
-				mode: "live",
-				tool: "fetch_web",
-				query: url,
-				endpoint: url,
-				results,
-				artifact_dir: artifactDir,
-				message: "Read successful",
-			},
-			artifacts,
-		);
-	}
-
-	const response = await postJson(
-		endpoint,
-		{
-			url,
-			formats: [format === "html" ? "HTML" : "TEXT"],
-			mode: "auto",
-			pdfExtractEnable: isPdfUrl(url),
-			enhancedOcr: true,
-			timeout: config.toolTimeoutMs,
-		},
-		{ Authorization: `Bearer ${config.xiaosuReaderAccessKey}` },
-		signal,
-		config.toolTimeoutMs,
-	);
-	const payload = isRecord(response.payload) ? response.payload : {};
-	const content = firstString(recordValue(payload, "text"), recordValue(payload, "html"));
-	const result = evidenceFromFetchedContent(
-		url,
-		content,
-		{
-			reader_type: "xiaosu_reader",
-			internal_links: toStringArray(recordValue(payload, "internal_links")),
-			external_links: toStringArray(recordValue(payload, "external_links")),
-		},
-		response.status,
-	);
-	const message = result.content
-		? "Read successful"
-		: "The reader returned no content. Do not cite this URL for factual claims.";
-	const artifactDir = createArtifactDir("fetch_web");
-	const results = result.content ? [result] : [];
-	const artifacts = await artifactsFromRecords("fetch_web", results, artifactDir, signal, config.toolTimeoutMs);
-	return buildToolResult(
-		{
-			mode: "live",
-			tool: "fetch_web",
-			query: url,
-			endpoint,
-			results,
-			artifact_dir: artifactDir,
-			message,
-		},
-		artifacts,
-	);
-}
-
 async function executeSearchTool(
 	tool: IrabSearchToolName,
 	params: SearchExecutionParams,
@@ -1683,11 +1387,7 @@ async function executeSearchTool(
 ): Promise<AgentToolResult<IrabToolDetails>> {
 	if (signal?.aborted) throw new Error("IRaB tool call aborted");
 
-	if (gatewayConfigured()) return gatewaySearchTool(tool, params, signal);
-	if (tool === "search_paipai") return liveSearchPaipai(params, signal);
-	if (tool === "search_global_data") return liveSearchGlobalData(params, signal);
-	if (tool === "search_cn_marketdata") return liveSearchCnMarketData(params, signal);
-	return liveSearchWeb(params, signal);
+	return gatewaySearchTool(tool, params, signal);
 }
 
 async function executeFetchWebTool(
@@ -1697,8 +1397,7 @@ async function executeFetchWebTool(
 ): Promise<AgentToolResult<IrabToolDetails>> {
 	if (signal?.aborted) throw new Error("IRaB tool call aborted");
 
-	if (gatewayConfigured()) return gatewayFetchWeb(url, format, signal);
-	return liveFetchWeb(url, format, signal);
+	return gatewayFetchWeb(url, format, signal);
 }
 
 const commonSearchParameters = {
