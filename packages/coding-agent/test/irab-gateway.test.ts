@@ -1,6 +1,6 @@
 import { once } from "node:events";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import type { Server } from "node:http";
+import { request as httpRequest, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -52,6 +52,59 @@ async function postJson(url: string, body: Record<string, unknown>, token?: stri
 		body: JSON.stringify(body),
 	});
 	return { status: response.status, payload: (await response.json()) as unknown };
+}
+
+function streamResponse(chunks: string[], delayMs: number): Response {
+	const encoder = new TextEncoder();
+	let index = 0;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	return new Response(
+		new ReadableStream<Uint8Array>({
+			start(controller) {
+				const send = (): void => {
+					if (index >= chunks.length) {
+						controller.close();
+						return;
+					}
+					controller.enqueue(encoder.encode(chunks[index]));
+					index += 1;
+					timer = setTimeout(send, delayMs);
+				};
+				send();
+			},
+			cancel() {
+				if (timer) clearTimeout(timer);
+			},
+		}),
+		{ status: 200, headers: { "Content-Type": "application/json" } },
+	);
+}
+
+async function abortModelListAfterFirstChunk(baseUrl: string, token: string): Promise<void> {
+	const url = new URL(`${baseUrl}/v1/models`);
+	await new Promise<void>((resolve, reject) => {
+		const request = httpRequest(
+			url,
+			{
+				method: "GET",
+				headers: { Authorization: `Bearer ${token}` },
+			},
+			(response) => {
+				response.once("data", () => {
+					request.destroy();
+					resolve();
+				});
+				response.once("error", (error: NodeJS.ErrnoException) => {
+					if (error.code !== "ECONNRESET") reject(error);
+				});
+			},
+		);
+		request.once("error", (error: NodeJS.ErrnoException) => {
+			if (error.code !== "ECONNRESET") reject(error);
+		});
+		request.end();
+	});
+	await new Promise((resolve) => setTimeout(resolve, 20));
 }
 
 function createTempDir(): string {
@@ -233,5 +286,41 @@ describe("IRaB gateway", () => {
 
 		expect(first.status).toBe(200);
 		expect(second.status).toBe(429);
+	});
+
+	it("releases model proxy concurrency when the client disconnects mid-stream", async () => {
+		const dir = createTempDir();
+		const paths = gatewayPaths(dir);
+		activeServer = createIrabGatewayServer({
+			config: {
+				...paths,
+				adminToken: "admin",
+				source: {
+					rabyteBaseUrl: "https://rabyte.test",
+					rabyteApiKey: "rabyte_key",
+				},
+				defaultQuota: { qps: 10, concurrency: 1, totalRequests: 10 },
+			},
+			fetchImpl: async (input: string | URL | Request) => {
+				const url = String(input);
+				if (url === "https://rabyte.test/v1/models") {
+					return streamResponse(['{"data":[', '{"id":"model-a"}', "]}"], 50);
+				}
+				return new Response(JSON.stringify({ error: `Unexpected upstream URL ${url}` }), { status: 404 });
+			},
+		});
+		const baseUrl = await listen(activeServer);
+		const { token } = await applyAndApproveToken(baseUrl, {
+			evaluatorId: "eval-stream",
+			quota: { qps: 10, concurrency: 1, totalRequests: 10 },
+		});
+
+		await abortModelListAfterFirstChunk(baseUrl, token);
+
+		const response = await fetch(`${baseUrl}/v1/models`, {
+			headers: { Authorization: `Bearer ${token}` },
+		});
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({ data: [{ id: "model-a" }] });
 	});
 });

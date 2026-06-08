@@ -662,9 +662,31 @@ function responseHeaders(headers: Headers): Record<string, string> {
 
 function pipeReadableToResponse(readable: Readable, response: ServerResponse): Promise<void> {
 	return new Promise((resolve, reject) => {
-		readable.on("error", reject);
-		response.on("error", reject);
-		response.on("finish", resolve);
+		let settled = false;
+		const settle = (error?: Error): void => {
+			if (settled) return;
+			settled = true;
+			readable.off("error", fail);
+			response.off("error", fail);
+			response.off("finish", succeed);
+			response.off("close", close);
+			if (error) reject(error);
+			else resolve();
+		};
+		const succeed = (): void => {
+			settle();
+		};
+		const fail = (error: Error): void => {
+			settle(error);
+		};
+		const close = (): void => {
+			readable.destroy();
+			settle();
+		};
+		readable.on("error", fail);
+		response.on("error", fail);
+		response.on("finish", succeed);
+		response.on("close", close);
 		readable.pipe(response);
 	});
 }
