@@ -1,4 +1,34 @@
 <p align="center">
+  <strong>IRaB Agent</strong>
+</p>
+
+IRaB Agent is a lightweight financial research agent benchmark harness built on
+Pi. The fork is intended to evaluate how models use investment-research tools,
+ground answers in retrieved evidence, and produce source-aware outputs for the
+IRaB technical report.
+
+Initial project notes:
+
+- [IRaB benchmark spec and goals](docs/irab-benchmark-spec.md)
+- Runtime citation guidance: [.pi/APPEND_SYSTEM.md](.pi/APPEND_SYSTEM.md)
+- Replay finance tools: [packages/irab-finance-tools](packages/irab-finance-tools)
+
+Local IRaB startup:
+
+```bash
+npm install --ignore-scripts
+./pi-test.sh --list-models | rg rabyte
+./pi-test.sh --model rabyte/wangsu-claude-opus-4-6
+```
+
+The IRaB extension auto-loads `.env` from the repo root. Use `IRAB_TOOL_MODE=live`
+for DeepTask-backed PaiPai/global-data/web tools, or `IRAB_TOOL_MODE=replay` for
+fixture-only benchmark smoke tests. Skill discovery is disabled by default; pass
+`--skills` only when you intentionally want global/project skills loaded.
+
+---
+
+<p align="center">
   <a href="https://pi.dev">
     <img alt="pi logo" src="https://pi.dev/logo-auto.svg" width="128">
   </a>
