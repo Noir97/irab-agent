@@ -12,21 +12,28 @@ Initial project notes:
 - [IRaB benchmark spec and goals](docs/irab-benchmark-spec.md)
 - Runtime citation guidance: [.pi/APPEND_SYSTEM.md](.pi/APPEND_SYSTEM.md)
 - Live finance tools: [packages/irab-finance-tools](packages/irab-finance-tools)
+- Evaluation gateway: [docs/irab-gateway.md](docs/irab-gateway.md)
 
 Local IRaB startup:
 
 ```bash
 npm install --ignore-scripts
+cp .env.example .env
+# Put the approved gateway token in .env as IRAB_TOKEN=...
 ./pi-test.sh --list-models | rg rabyte
 ./pi-test.sh --model rabyte/wangsu-claude-opus-4-6
 ```
 
-The IRaB extension auto-loads `.env` from the repo root and currently runs the
-finance tools against configured live services. Static replay fixtures are not
-enabled because benchmark replay should be generated from recorded live runs only
-after an explicit sanitization/export step. Skill discovery is disabled by
-default; pass `--skills` only when you intentionally want global/project skills
-loaded.
+Approved external evaluators configure only `IRAB_TOKEN`. With that token, the
+Rabyte-compatible model provider and the five finance tools route through the
+IRaB Evaluation Gateway; internal PaiPai, global-data, websearch, reader, and
+model-source credentials stay on the gateway service. `IRAB_GATEWAY_URL` is only
+for local or self-hosted gateway development.
+
+Static replay fixtures are not enabled because benchmark replay should be
+generated from recorded live runs only after an explicit sanitization/export
+step. Skill discovery is disabled by default; pass `--skills` only when you
+intentionally want global/project skills loaded.
 
 ---
 

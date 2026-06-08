@@ -11,6 +11,7 @@ const MAX_LIMIT = 10;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const DEFAULT_RABYTE_BASE_URL = "https://test-llm.rabyte.cn";
+const DEFAULT_IRAB_GATEWAY_BASE_URL = `${DEFAULT_RABYTE_BASE_URL}/irab`;
 const DEFAULT_ARTIFACT_DIR = join(REPO_ROOT, "tmp", "irab-artifacts");
 
 type IrabSearchToolName = "search_paipai" | "search_global_data" | "search_cn_marketdata" | "search_web";
@@ -35,13 +36,14 @@ type EvidenceRecord = {
 };
 
 type IrabToolDetails = {
-	mode: "live";
+	mode: "gateway" | "live";
 	tool: IrabToolName;
 	query: string;
 	results: EvidenceRecord[];
 	artifacts: SerializedArtifactDetails[];
 	artifact_dir?: string;
 	endpoint?: string;
+	recording_id?: string;
 	message?: string;
 };
 
@@ -126,6 +128,12 @@ type LiveConfig = {
 	xiaosuReaderUrl: string;
 	xiaosuReaderOverseasUrl: string;
 	xiaosuReaderAccessKey: string;
+	toolTimeoutMs: number;
+};
+
+type GatewayConfig = {
+	baseUrl: string;
+	apiKey: string;
 	toolTimeoutMs: number;
 };
 
@@ -306,20 +314,36 @@ function env(name: string, fallback = ""): string {
 	return process.env[name]?.trim() || fallback;
 }
 
+function sourceEnv(primary: string, fallback: string): string {
+	return env(primary, env(fallback));
+}
+
 function openAIBaseUrl(baseUrl: string): string {
 	const trimmed = baseUrl.trim().replace(/\/+$/u, "");
 	if (trimmed.endsWith("/v1")) return trimmed;
 	return `${trimmed}/v1`;
 }
 
+function gatewayConfigured(): boolean {
+	return Boolean(env("IRAB_TOKEN"));
+}
+
+function gatewayBaseUrl(): string {
+	return env("IRAB_GATEWAY_URL", DEFAULT_IRAB_GATEWAY_BASE_URL);
+}
+
 function registerRabyteProvider(pi: ExtensionAPI): void {
-	const baseUrl = openAIBaseUrl(
-		env("IRAB_RABYTE_OPENAI_BASE_URL", env("IRAB_RABYTE_BASE_URL", DEFAULT_RABYTE_BASE_URL)),
-	);
+	const baseUrl = gatewayConfigured()
+		? openAIBaseUrl(gatewayBaseUrl())
+		: openAIBaseUrl(
+				sourceEnv("RABYTE_OPENAI_BASE_URL", "IRAB_RABYTE_OPENAI_BASE_URL") ||
+					sourceEnv("RABYTE_BASE_URL", "IRAB_RABYTE_BASE_URL") ||
+					DEFAULT_RABYTE_BASE_URL,
+			);
 	pi.registerProvider("rabyte", {
-		name: "Rabyte",
+		name: gatewayConfigured() ? "IRaB Gateway" : "Rabyte",
 		baseUrl,
-		apiKey: "$IRAB_RABYTE_API_KEY",
+		apiKey: gatewayConfigured() ? "$IRAB_TOKEN" : env("RABYTE_API_KEY") ? "$RABYTE_API_KEY" : "$IRAB_RABYTE_API_KEY",
 		api: "openai-completions",
 		models: rabyteModels,
 	});
@@ -333,15 +357,23 @@ function numberEnv(name: string, fallback: number): number {
 
 function liveConfig(): LiveConfig {
 	return {
-		paipaiBaseUrl: env("IRAB_PAIPAI_BASE_URL"),
-		paipaiApiKey: env("IRAB_PAIPAI_API_KEY"),
-		paipaiAppAgent: env("IRAB_PAIPAI_APP_AGENT"),
-		paipaiSign: env("IRAB_PAIPAI_SIGN"),
-		globalDataBaseUrl: env("IRAB_GLOBAL_DATA_BASE_URL"),
-		websearchServiceUrl: env("IRAB_WEBSEARCH_SERVICE_URL"),
-		xiaosuReaderUrl: env("IRAB_XIAOSU_READER_URL"),
-		xiaosuReaderOverseasUrl: env("IRAB_XIAOSU_READER_OVERSEAS_URL"),
-		xiaosuReaderAccessKey: env("IRAB_XIAOSU_READER_ACCESS_KEY"),
+		paipaiBaseUrl: sourceEnv("PAIPAI_BASE_URL", "IRAB_PAIPAI_BASE_URL"),
+		paipaiApiKey: sourceEnv("PAIPAI_API_KEY", "IRAB_PAIPAI_API_KEY"),
+		paipaiAppAgent: sourceEnv("PAIPAI_APP_AGENT", "IRAB_PAIPAI_APP_AGENT"),
+		paipaiSign: sourceEnv("PAIPAI_SIGN", "IRAB_PAIPAI_SIGN"),
+		globalDataBaseUrl: sourceEnv("GLOBAL_DATA_BASE_URL", "IRAB_GLOBAL_DATA_BASE_URL"),
+		websearchServiceUrl: sourceEnv("WEBSEARCH_SERVICE_URL", "IRAB_WEBSEARCH_SERVICE_URL"),
+		xiaosuReaderUrl: sourceEnv("XIAOSU_READER_URL", "IRAB_XIAOSU_READER_URL"),
+		xiaosuReaderOverseasUrl: sourceEnv("XIAOSU_READER_OVERSEAS_URL", "IRAB_XIAOSU_READER_OVERSEAS_URL"),
+		xiaosuReaderAccessKey: sourceEnv("XIAOSU_READER_ACCESS_KEY", "IRAB_XIAOSU_READER_ACCESS_KEY"),
+		toolTimeoutMs: numberEnv("IRAB_TOOL_TIMEOUT_MS", DEFAULT_TIMEOUT_MS),
+	};
+}
+
+function gatewayConfig(): GatewayConfig {
+	return {
+		baseUrl: openAIBaseUrl(gatewayBaseUrl()),
+		apiKey: requireConfig(env("IRAB_TOKEN"), "IRAB_TOKEN"),
 		toolTimeoutMs: numberEnv("IRAB_TOOL_TIMEOUT_MS", DEFAULT_TIMEOUT_MS),
 	};
 }
@@ -676,6 +708,33 @@ function parseMarkdownTable(content: string): EvidenceTable | null {
 	return null;
 }
 
+function evidenceCellFromUnknown(value: unknown): EvidenceCell {
+	if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || value === null) {
+		return value;
+	}
+	return valueToContent(value);
+}
+
+function evidenceTableFromUnknown(value: unknown): EvidenceTable | null {
+	if (!isRecord(value)) return null;
+	const rawColumns = recordValue(value, "columns");
+	const rawRows = recordValue(value, "rows");
+	if (!Array.isArray(rawColumns) || !Array.isArray(rawRows)) return null;
+	const columns = rawColumns.map((column) => firstString(column)).filter(Boolean);
+	if (columns.length === 0) return null;
+	const rows: Record<string, EvidenceCell>[] = [];
+	for (const rawRow of rawRows) {
+		if (!isRecord(rawRow)) continue;
+		const row: Record<string, EvidenceCell> = {};
+		for (const column of columns) {
+			row[column] = evidenceCellFromUnknown(recordValue(rawRow, column));
+		}
+		rows.push(row);
+	}
+	if (rows.length === 0) return null;
+	return { columns, rows };
+}
+
 function extractItems(payload: unknown, keys: string[]): unknown[] {
 	if (Array.isArray(payload)) return payload;
 	if (!isRecord(payload)) return [];
@@ -768,7 +827,7 @@ function evidenceFromUnknown(prefix: string, item: unknown, index: number): Evid
 		publisher,
 		url,
 		content,
-		table: parseMarkdownTable(tableContent),
+		table: evidenceTableFromUnknown(recordValue(record, "table")) ?? parseMarkdownTable(tableContent),
 		metadata: recordMetadata(item),
 	};
 }
@@ -1220,6 +1279,99 @@ async function postJson(
 	}
 }
 
+function gatewayToolEndpoint(config: GatewayConfig, tool: IrabToolName): string {
+	return joinUrl(config.baseUrl, `/tools/${tool}`);
+}
+
+function gatewayHeaders(config: GatewayConfig): Record<string, string> {
+	return { Authorization: `Bearer ${config.apiKey}` };
+}
+
+function gatewayResponseRecords(
+	tool: IrabToolName,
+	payload: unknown,
+	query: string,
+	limit: number | undefined,
+): EvidenceRecord[] {
+	const cappedLimit = normalizeLimit(limit);
+	const response = isRecord(payload) ? payload : {};
+	const records = recordValue(response, "records") ?? recordValue(response, "results");
+	if (Array.isArray(records)) {
+		return dedupeSourceIds(records.map((item, index) => evidenceFromUnknown(tool, item, index))).slice(
+			0,
+			cappedLimit,
+		);
+	}
+
+	const upstreamPayload = recordValue(response, "payload") ?? payload;
+	if (tool === "search_global_data") return normalizeGlobalDataRecords(upstreamPayload, query).slice(0, cappedLimit);
+	if (tool === "search_cn_marketdata") return normalizeSimpleDataRecords(upstreamPayload, query).slice(0, cappedLimit);
+	if (tool === "search_web") return normalizeWebRecords(upstreamPayload, cappedLimit);
+	return normalizePayloadRecords(tool, upstreamPayload, cappedLimit);
+}
+
+function gatewayResponseMessage(payload: unknown): string | undefined {
+	if (!isRecord(payload)) return undefined;
+	const message = firstString(recordValue(payload, "message"));
+	return message || undefined;
+}
+
+function gatewayRecordingId(payload: unknown): string | undefined {
+	if (!isRecord(payload)) return undefined;
+	const recordingId = firstString(recordValue(payload, "recording_id"), recordValue(payload, "recordingId"));
+	return recordingId || undefined;
+}
+
+async function gatewaySearchTool(
+	tool: IrabSearchToolName,
+	params: SearchExecutionParams,
+	signal: AbortSignal | undefined,
+): Promise<AgentToolResult<IrabToolDetails>> {
+	const config = gatewayConfig();
+	const endpoint = gatewayToolEndpoint(config, tool);
+	const response = await postJson(endpoint, params, gatewayHeaders(config), signal, config.toolTimeoutMs);
+	const results = gatewayResponseRecords(tool, response.payload, params.query, params.limit);
+	return buildSearchResult(
+		"gateway",
+		tool,
+		params.query,
+		endpoint,
+		results,
+		signal,
+		config.toolTimeoutMs,
+		gatewayResponseMessage(response.payload),
+		gatewayRecordingId(response.payload),
+	);
+}
+
+async function gatewayFetchWeb(
+	url: string,
+	format: "text" | "html",
+	signal: AbortSignal | undefined,
+): Promise<AgentToolResult<IrabToolDetails>> {
+	const config = gatewayConfig();
+	const endpoint = gatewayToolEndpoint(config, "fetch_web");
+	const response = await postJson(endpoint, { url, format }, gatewayHeaders(config), signal, config.toolTimeoutMs);
+	const results = gatewayResponseRecords("fetch_web", response.payload, url, DEFAULT_LIMIT);
+	const artifactDir = createArtifactDir("fetch_web");
+	const artifacts = await artifactsFromRecords("fetch_web", results, artifactDir, signal, config.toolTimeoutMs);
+	return buildToolResult(
+		{
+			mode: "gateway",
+			tool: "fetch_web",
+			query: url,
+			endpoint,
+			results,
+			artifact_dir: artifactDir,
+			recording_id: gatewayRecordingId(response.payload),
+			message:
+				gatewayResponseMessage(response.payload) ??
+				(results.length === 0 ? "No gateway evidence matched this URL." : "Read successful"),
+		},
+		artifacts,
+	);
+}
+
 async function fetchText(
 	url: string,
 	signal: AbortSignal | undefined,
@@ -1266,7 +1418,7 @@ async function liveSearchPaipai(
 	signal: AbortSignal | undefined,
 ): Promise<AgentToolResult<IrabToolDetails>> {
 	const config = liveConfig();
-	const endpoint = joinUrl(requireConfig(config.paipaiBaseUrl, "IRAB_PAIPAI_BASE_URL"), "/paipai_data");
+	const endpoint = joinUrl(requireConfig(config.paipaiBaseUrl, "PAIPAI_BASE_URL"), "/paipai_data");
 	const limit = normalizeLimit(params.limit);
 	const response = await postJson(
 		endpoint,
@@ -1293,7 +1445,7 @@ async function liveSearchPaipai(
 		config.toolTimeoutMs,
 	);
 	const results = normalizePayloadRecords("paipai", response.payload, limit);
-	return buildLiveSearchResult("search_paipai", params.query, endpoint, results, signal, config.toolTimeoutMs);
+	return buildSearchResult("live", "search_paipai", params.query, endpoint, results, signal, config.toolTimeoutMs);
 }
 
 async function liveSearchGlobalData(
@@ -1301,13 +1453,18 @@ async function liveSearchGlobalData(
 	signal: AbortSignal | undefined,
 ): Promise<AgentToolResult<IrabToolDetails>> {
 	const config = liveConfig();
-	const endpoint = joinUrl(
-		requireConfig(config.globalDataBaseUrl, "IRAB_GLOBAL_DATA_BASE_URL"),
-		"/global/stable/query",
-	);
+	const endpoint = joinUrl(requireConfig(config.globalDataBaseUrl, "GLOBAL_DATA_BASE_URL"), "/global/stable/query");
 	const response = await postJson(endpoint, { query: params.query }, {}, signal, config.toolTimeoutMs);
 	const results = normalizeGlobalDataRecords(response.payload, params.query);
-	return buildLiveSearchResult("search_global_data", params.query, endpoint, results, signal, config.toolTimeoutMs);
+	return buildSearchResult(
+		"live",
+		"search_global_data",
+		params.query,
+		endpoint,
+		results,
+		signal,
+		config.toolTimeoutMs,
+	);
 }
 
 async function liveSearchCnMarketData(
@@ -1315,7 +1472,7 @@ async function liveSearchCnMarketData(
 	signal: AbortSignal | undefined,
 ): Promise<AgentToolResult<IrabToolDetails>> {
 	const config = liveConfig();
-	const endpoint = joinUrl(requireConfig(config.paipaiBaseUrl, "IRAB_PAIPAI_BASE_URL"), "/edb/simple_data");
+	const endpoint = joinUrl(requireConfig(config.paipaiBaseUrl, "PAIPAI_BASE_URL"), "/edb/simple_data");
 	const limit = normalizeLimit(params.limit);
 	const timeoutSecs = Math.ceil(config.toolTimeoutMs / 1000);
 	const response = await postJson(
@@ -1331,7 +1488,15 @@ async function liveSearchCnMarketData(
 		config.toolTimeoutMs,
 	);
 	const results = normalizeSimpleDataRecords(response.payload, params.query);
-	return buildLiveSearchResult("search_cn_marketdata", params.query, endpoint, results, signal, config.toolTimeoutMs);
+	return buildSearchResult(
+		"live",
+		"search_cn_marketdata",
+		params.query,
+		endpoint,
+		results,
+		signal,
+		config.toolTimeoutMs,
+	);
 }
 
 async function liveSearchWeb(
@@ -1339,7 +1504,7 @@ async function liveSearchWeb(
 	signal: AbortSignal | undefined,
 ): Promise<AgentToolResult<IrabToolDetails>> {
 	const config = liveConfig();
-	const endpoint = joinUrl(requireConfig(config.websearchServiceUrl, "IRAB_WEBSEARCH_SERVICE_URL"), "/v1/search");
+	const endpoint = joinUrl(requireConfig(config.websearchServiceUrl, "WEBSEARCH_SERVICE_URL"), "/v1/search");
 	const limit = normalizeLimit(params.limit);
 	const response = await postJson(
 		endpoint,
@@ -1357,7 +1522,7 @@ async function liveSearchWeb(
 		config.toolTimeoutMs,
 	);
 	const results = normalizeWebRecords(response.payload, limit);
-	return buildLiveSearchResult("search_web", params.query, endpoint, results, signal, config.toolTimeoutMs);
+	return buildSearchResult("live", "search_web", params.query, endpoint, results, signal, config.toolTimeoutMs);
 }
 
 function searchMessage(
@@ -1365,9 +1530,10 @@ function searchMessage(
 	query: string,
 	recordCount: number,
 	artifactCount: number,
+	mode: "gateway" | "live",
 ): string | undefined {
 	if (artifactCount === 0) {
-		return `No live evidence matched "${query}". Do not invent citations.`;
+		return `No ${mode} evidence matched "${query}". Do not invent citations.`;
 	}
 	if (tool === "search_paipai") return `Found ${artifactCount} items`;
 	if (tool === "search_web") return `Found ${artifactCount} results`;
@@ -1377,25 +1543,29 @@ function searchMessage(
 	return `Got ${artifactCount} table${artifactCount === 1 ? "" : "s"}`;
 }
 
-async function buildLiveSearchResult(
+async function buildSearchResult(
+	mode: "gateway" | "live",
 	tool: IrabSearchToolName,
 	query: string,
 	endpoint: string,
 	results: EvidenceRecord[],
 	signal: AbortSignal | undefined,
 	timeoutMs: number,
+	messageOverride?: string,
+	recordingId?: string,
 ): Promise<AgentToolResult<IrabToolDetails>> {
 	const artifactDir = createArtifactDir(tool);
 	const artifacts = await artifactsFromRecords(tool, results, artifactDir, signal, timeoutMs);
-	const message = searchMessage(tool, query, results.length, artifacts.length);
+	const message = messageOverride ?? searchMessage(tool, query, results.length, artifacts.length, mode);
 	return buildToolResult(
 		{
-			mode: "live",
+			mode,
 			tool,
 			query,
 			endpoint,
 			results,
 			artifact_dir: artifactDir,
+			recording_id: recordingId,
 			message,
 		},
 		artifacts,
@@ -1513,6 +1683,7 @@ async function executeSearchTool(
 ): Promise<AgentToolResult<IrabToolDetails>> {
 	if (signal?.aborted) throw new Error("IRaB tool call aborted");
 
+	if (gatewayConfigured()) return gatewaySearchTool(tool, params, signal);
 	if (tool === "search_paipai") return liveSearchPaipai(params, signal);
 	if (tool === "search_global_data") return liveSearchGlobalData(params, signal);
 	if (tool === "search_cn_marketdata") return liveSearchCnMarketData(params, signal);
@@ -1526,6 +1697,7 @@ async function executeFetchWebTool(
 ): Promise<AgentToolResult<IrabToolDetails>> {
 	if (signal?.aborted) throw new Error("IRaB tool call aborted");
 
+	if (gatewayConfigured()) return gatewayFetchWeb(url, format, signal);
 	return liveFetchWeb(url, format, signal);
 }
 

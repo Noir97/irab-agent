@@ -40,7 +40,8 @@ The preferred implementation is:
 1. Keep Pi as the agent runtime, model interface, TUI, JSON mode, and session
    recorder.
 2. Add an IRaB Pi extension package that registers the benchmark tools.
-3. Route tool calls to a private tool gateway during internal runs.
+3. Route approved external model and tool calls through a private tool gateway
+   using a single `IRAB_TOKEN`.
 4. Normalize every tool response into a stable evidence format:
    `source_id`, `title`, `date`, `publisher`, `url`, `content`, `table`, and
    `metadata`.
@@ -84,6 +85,40 @@ Evaluation Gateway with these controls:
 Live gateway access is for controlled benchmarking only. Public technical
 reports and reproducible artifacts must use sanitized fixtures, not direct live
 recordings.
+
+## Gateway Contract
+
+Approved external evaluators configure only:
+
+```bash
+IRAB_TOKEN=irab_...
+```
+
+The client extension uses that token for both:
+
+- OpenAI-compatible model calls through the gateway `/v1/*` model proxy.
+- Tool calls through `/v1/tools/{tool_name}` for `search_paipai`,
+  `search_global_data`, `search_cn_marketdata`, `search_web`, and `fetch_web`.
+
+`IRAB_GATEWAY_URL` exists only as a local or self-hosted development override.
+It is not part of the normal external evaluator setup.
+
+Gateway deployment secrets are service-side source credentials, not client
+configuration. The MVP gateway reads deploy-time source settings such as
+`PAIPAI_BASE_URL`, `PAIPAI_API_KEY`, `GLOBAL_DATA_BASE_URL`,
+`WEBSEARCH_SERVICE_URL`, `XIAOSU_READER_URL`, `XIAOSU_READER_ACCESS_KEY`,
+`RABYTE_BASE_URL`, and `RABYTE_API_KEY`, with temporary compatibility fallbacks
+for the older `IRAB_*` internal variable names.
+
+Token administration is separate from evaluator access:
+
+- `POST /v1/token-applications` creates an application.
+- `POST /admin/token-applications/{id}/approve` issues a one-time visible token
+  after admin approval.
+- `POST /admin/tokens/{id}/revoke` revokes an issued token.
+
+The gateway must hash stored tokens, enforce scopes and quotas, append audit
+events, and avoid logging plaintext evaluator tokens.
 
 ## Recording and Sanitized Replay
 
