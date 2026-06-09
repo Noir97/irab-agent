@@ -31,23 +31,31 @@ External evaluators need an IRaB gateway token. The public client repository
 does not contain gateway admin endpoints, approval tooling, internal source
 credentials, or token-management secrets.
 
-To request access, contact the IRaB maintainers through the evaluation channel
-provided for your collaboration. Include:
+To request access, submit the public token application form:
+
+```text
+http://49.233.81.41/irab/apply
+```
+
+The application asks for:
 
 - Name, organization, and contact email.
-- Evaluation purpose, expected publication or internal-use scope, and time
-  window.
-- Model families or endpoints you plan to evaluate.
-- Expected task volume, concurrency, and rough budget.
-- Whether you need hosted evaluation, live gateway access, or sanitized replay
-  artifacts.
+- Evaluation purpose.
+- Requested model scope, if any.
+- Requested task set, if the run should be scoped to a benchmark subset.
+- Requested IRaB tools.
 
-Approved evaluators receive:
+After an admin approves the request, the gateway sends a one-time claim link by
+email. Open that link once and store the displayed environment variables:
 
-- `IRAB_TOKEN`: required. A scoped, revocable gateway token.
-- `IRAB_GATEWAY_URL`: optional. Only needed for local or self-hosted gateway
-  overrides. Hosted evaluation usually uses the default gateway URL embedded in
-  the client.
+```bash
+IRAB_GATEWAY_URL=http://49.233.81.41/irab
+IRAB_TOKEN=irab_...
+```
+
+For hosted evaluation, `IRAB_TOKEN` is the only required client-side secret.
+`IRAB_GATEWAY_URL` is optional unless the claim page shows a non-default gateway
+or you are using a local/self-hosted gateway.
 
 Tokens are intended for controlled benchmark runs only. Do not commit `.env`,
 tokens, raw recordings, or unsanitized tool outputs.
