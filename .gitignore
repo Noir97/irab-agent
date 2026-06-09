@@ -41,3 +41,4 @@ plans/
 collect.sh
 tmp/irab-artifacts/
 tmp/irab-recordings/
+tmp/irab-batch-runs/

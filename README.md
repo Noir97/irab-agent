@@ -34,6 +34,15 @@ With `IRAB_TOKEN` set, the Rabyte-compatible model provider and the five finance
 tools route through the IRaB gateway. Internal PaiPai, global-data, websearch,
 reader, and model-source credentials stay on the private gateway service.
 
+Batch example:
+
+```bash
+node scripts/irab-batch-example.mjs --input examples/irab-batch-tasks.jsonl
+```
+
+Each JSONL task needs an `id` and `prompt`. The script runs `./pi-test.sh -p`
+for each task and writes answers plus metadata under `tmp/irab-batch-runs/`.
+
 Static replay fixtures are not enabled because benchmark replay should be
 generated from recorded live runs only after an explicit sanitization/export
 step. Skill discovery is disabled by default; pass `--skills` only when you
