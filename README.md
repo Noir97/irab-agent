@@ -41,9 +41,6 @@ The application asks for:
 
 - Name, organization, and contact email.
 - Evaluation purpose.
-- Requested model scope, if any.
-- Requested task set, if the run should be scoped to a benchmark subset.
-- Requested IRaB tools.
 
 After an admin approves the request, the gateway sends a one-time claim link by
 email. Open that link once and store the displayed environment variables:
