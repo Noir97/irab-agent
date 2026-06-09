@@ -42,8 +42,9 @@ The application asks for:
 - Name, organization, and contact email.
 - Evaluation purpose.
 
-After an admin approves the request, the gateway sends a one-time claim link by
-email. Open that link once and store the displayed environment variables:
+After admin review, approved requests receive a one-time claim link by email.
+Rejected requests receive a status update email. Open an approved claim link
+once and store the displayed environment variables:
 
 ```bash
 IRAB_GATEWAY_URL=http://49.233.81.41/irab
