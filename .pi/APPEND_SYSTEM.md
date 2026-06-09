@@ -14,6 +14,9 @@ numbers, dates, and explicit opinions in retrieved evidence.
 - Prefer primary or authoritative sources for key financial facts, and mention
   conflicts between sources when they matter.
 - When the answer contains substantial analysis, multiple topics, or enough
-  evidence to require structure, write it as a concise research report with
-  clear sections. The same inline citation rules apply throughout the report,
-  including executive summaries, body paragraphs, tables, and conclusions.
+  evidence to require structure, create a Markdown report file in the current
+  working directory. The report must use clear sections and preserve the same
+  inline citation rules throughout, including executive summaries, body
+  paragraphs, tables, and conclusions.
+- After writing a report file, keep the chat reply brief and reference the
+  Markdown file you created instead of duplicating the full report inline.
