@@ -76,22 +76,27 @@ IRAB_TOOL_TIMEOUT_MS=30000
 IRAB_ARTIFACT_DIR=
 ```
 
-Verify that Rabyte models are visible:
+Configure the model provider you want to evaluate through Pi. The recommended
+path is to bring your own provider configuration, API key, or endpoint supported
+by Pi, then verify that the model appears locally:
+
+```bash
+./pi-test.sh --list-models
+```
+
+Run one interactive benchmark session with the model under evaluation:
+
+```bash
+./pi-test.sh --model <provider>/<model>
+```
+
+Some evaluation tokens may also expose hosted Rabyte-compatible models. If that
+scope is enabled, they appear under the `rabyte` provider and can be selected in
+the same `provider/model` form:
 
 ```bash
 ./pi-test.sh --list-models | rg rabyte
-```
-
-Run one interactive benchmark session:
-
-```bash
 ./pi-test.sh --model rabyte/wangsu-claude-opus-4-6
-```
-
-Useful alternative model example:
-
-```bash
-./pi-test.sh --model rabyte/kimi-k2.6-thinking
 ```
 
 `pi-test.sh` defaults `PI_SKIP_VERSION_CHECK=1` so benchmark startup output stays
@@ -136,28 +141,32 @@ Batch input is JSONL: one task per line. Each line must be a JSON object.
 Required fields:
 
 - `id`: stable task id. Used as the result directory name after sanitization.
-- `prompt`: benchmark prompt sent to the agent.
+- `prompt`: raw benchmark question sent to the agent. Keep this as the user
+  question being evaluated, not as harness instructions.
 
 Optional fields:
 
-- `model`: per-task model override, for example
-  `rabyte/kimi-k2.6-thinking`.
+- `model`: per-task model override, for example `<provider>/<model>`.
 - `name`: Pi session display name.
 - `appendSystemPrompt`: extra task-specific instructions appended after the
-  default IRaB source-grounding prompt.
+  default IRaB source-grounding prompt. Use this only for task-local protocol
+  changes that are not already covered by `.pi/APPEND_SYSTEM.md`.
 
 Example:
 
 ```jsonl
-{"id":"cn-brokerage-policy","prompt":"请使用 IRaB 工具检索并回答：最近影响中国券商板块估值的主要政策因素是什么？要求给出 3-5 条要点，并在每条事实后使用 [source:x] 行内引用。"}
-{"id":"hk-tech-earnings","model":"rabyte/kimi-k2.6-thinking","prompt":"请使用 IRaB 工具检索并回答：港股互联网龙头最近一轮业绩中，市场最关注的增长和利润率问题是什么？请写成简短研究备忘录，并使用 [source:x] 行内引用。"}
+{"id":"cn-brokerage-policy","prompt":"最近影响中国券商板块估值的主要政策因素是什么？"}
+{"id":"hk-tech-earnings","model":"<provider>/<model>","prompt":"港股互联网龙头最近一轮业绩中，市场最关注的增长和利润率问题是什么？"}
 ```
 
 Task-writing recommendations:
 
-- Make the expected answer format explicit: bullets, memo, table, or report.
-- Ask for inline `[source:x]` citations in the prompt when factual claims are
-  required.
+- Keep the task prompt in its natural user-question form.
+- Do not repeat harness-level instructions such as "use IRaB tools", "retrieve
+  evidence", or "cite each fact with `[source:x]`"; these are injected by
+  `.pi/APPEND_SYSTEM.md`.
+- Include answer-format requirements only when they are part of the benchmark
+  question being evaluated, for example asking for a memo or comparison table.
 - Keep one evaluation question per task unless multi-hop reasoning is being
   measured intentionally.
 - Do not include secrets or raw private source material in prompts.
@@ -177,7 +186,7 @@ Choose a model:
 ```bash
 node scripts/irab-batch-example.mjs \
   --input examples/irab-batch-tasks.jsonl \
-  --model rabyte/kimi-k2.6-thinking
+  --model <provider>/<model>
 ```
 
 Set output directory, concurrency, and timeout:
@@ -201,7 +210,9 @@ node scripts/irab-batch-example.mjs \
 
 Batch defaults:
 
-- Default model: `rabyte/wangsu-claude-opus-4-6`.
+- Default model: the runner's hosted-model convenience default. For external
+  evaluation, pass `--model` explicitly so the run records the intended
+  provider/model.
 - Default concurrency: `10`.
 - Default output directory: `tmp/irab-batch-runs/<timestamp>`.
 - Each task runs in an isolated workspace under its result directory.
@@ -304,18 +315,19 @@ Rules for evaluation data:
 
 ## Troubleshooting
 
-No Rabyte models appear in `--list-models`:
+Expected model does not appear in `--list-models`:
 
-- Check that `.env` contains `IRAB_TOKEN`.
+- Check the provider API key or endpoint configuration used by Pi.
+- If using hosted Rabyte-compatible models, check that `.env` contains an
+  `IRAB_TOKEN` with model scope.
 - Run from this repo or use `pi-test.sh`, which loads the local checkout.
 - In batch mode, use the provided runner so repo extensions are loaded
   explicitly for isolated workspaces.
 
 `Model "..." not found`:
 
-- Run `./pi-test.sh --list-models | rg rabyte`.
-- Use the `provider/model` form shown by the runner examples, such as
-  `rabyte/wangsu-claude-opus-4-6`.
+- Run `./pi-test.sh --list-models`.
+- Use the `provider/model` form shown by the model list.
 - Check `result.json` for the actual argv used by the batch task.
 
 Task output is empty:
