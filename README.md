@@ -33,6 +33,8 @@ cp .env.example .env
 With `IRAB_TOKEN` set, the Rabyte-compatible model provider and the five finance
 tools route through the IRaB gateway. Internal PaiPai, global-data, websearch,
 reader, and model-source credentials stay on the private gateway service.
+IRaB launchers default `PI_SKIP_VERSION_CHECK=1` so benchmark startup stays
+pinned to the checked-out Pi version without update notifications.
 
 Batch example:
 

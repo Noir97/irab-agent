@@ -3,6 +3,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# IRaB benchmark runs are version-pinned to this checkout. Keep startup output
+# stable by disabling Pi's upstream version notification unless explicitly set.
+export PI_SKIP_VERSION_CHECK="${PI_SKIP_VERSION_CHECK:-1}"
+
 # Check for --no-env flag
 NO_ENV=false
 ARGS=()

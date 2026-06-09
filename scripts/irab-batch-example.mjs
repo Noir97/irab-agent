@@ -7,7 +7,9 @@ import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_MODEL = "rabyte/wangsu-claude-opus-4-6";
+const DEFAULT_CONCURRENCY = 10;
 const DEFAULT_OUT_DIR = join(REPO_ROOT, "tmp", "irab-batch-runs", new Date().toISOString().replace(/[:.]/gu, "-"));
+const DEFAULT_PI_SKIP_VERSION_CHECK = "1";
 
 function printHelp() {
 	console.log(`Usage:
@@ -17,7 +19,7 @@ Options:
   --input <path>        JSONL task file. Each line needs {"id","prompt"}.
   --out <dir>           Output directory. Default: tmp/irab-batch-runs/<timestamp>
   --model <model>       Pi model. Default: ${DEFAULT_MODEL}
-  --concurrency <n>     Parallel Pi processes. Default: 1
+  --concurrency <n>     Parallel Pi processes. Default: ${DEFAULT_CONCURRENCY}
   --timeout-ms <n>      Per-task timeout. Default: 0, no timeout
   --dry-run             Validate input and print commands without running Pi
   --help                Show this help
@@ -36,7 +38,7 @@ function parseArgs(argv) {
 		input: "",
 		outDir: DEFAULT_OUT_DIR,
 		model: DEFAULT_MODEL,
-		concurrency: 1,
+		concurrency: DEFAULT_CONCURRENCY,
 		timeoutMs: 0,
 		dryRun: false,
 		help: false,
@@ -158,12 +160,21 @@ function buildPiArgs(task, options) {
 	return args;
 }
 
+function buildPiEnv() {
+	return {
+		...process.env,
+		PI_SKIP_VERSION_CHECK: process.env.PI_SKIP_VERSION_CHECK ?? DEFAULT_PI_SKIP_VERSION_CHECK,
+	};
+}
+
 function runPiTask(task, options) {
 	const args = buildPiArgs(task, options);
+	const env = buildPiEnv();
 	if (options.dryRun) {
 		return Promise.resolve({
 			id: task.id,
 			command: args.join(" "),
+			piSkipVersionCheck: env.PI_SKIP_VERSION_CHECK,
 			exitCode: 0,
 			durationMs: 0,
 			stdout: "",
@@ -176,7 +187,7 @@ function runPiTask(task, options) {
 	return new Promise((resolveTask) => {
 		const child = spawn(args[0], args.slice(1), {
 			cwd: REPO_ROOT,
-			env: process.env,
+			env,
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 
@@ -205,6 +216,7 @@ function runPiTask(task, options) {
 			resolveTask({
 				id: task.id,
 				command: args.join(" "),
+				piSkipVersionCheck: env.PI_SKIP_VERSION_CHECK,
 				exitCode: code ?? 1,
 				signal,
 				durationMs: Date.now() - startedAt,
@@ -218,6 +230,7 @@ function runPiTask(task, options) {
 			resolveTask({
 				id: task.id,
 				command: args.join(" "),
+				piSkipVersionCheck: env.PI_SKIP_VERSION_CHECK,
 				exitCode: 1,
 				durationMs: Date.now() - startedAt,
 				stdout,
@@ -240,6 +253,7 @@ async function writeResult(outDir, result) {
 			{
 				id: result.id,
 				command: result.command,
+				piSkipVersionCheck: result.piSkipVersionCheck,
 				exitCode: result.exitCode,
 				signal: result.signal,
 				durationMs: result.durationMs,
@@ -298,6 +312,7 @@ async function main() {
 				concurrency: options.concurrency,
 				timeoutMs: options.timeoutMs,
 				dryRun: options.dryRun,
+				piSkipVersionCheck: process.env.PI_SKIP_VERSION_CHECK ?? DEFAULT_PI_SKIP_VERSION_CHECK,
 				taskCount: tasks.length,
 				startedAt: new Date().toISOString(),
 			},
