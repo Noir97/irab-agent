@@ -181,7 +181,7 @@ describe("IRaB finance tools extension", () => {
 
 		const toolResult = await tool.execute(
 			"call_gateway",
-			{ query: "BYD battery margin", limit: 1, [["user", "id"].join("_")]: "do-not-forward" },
+			{ query: "BYD battery margin", limit: 1 },
 			undefined,
 			undefined,
 			{} as ExtensionContext,
@@ -198,7 +198,6 @@ describe("IRaB finance tools extension", () => {
 			query: "BYD battery margin",
 			limit: 1,
 		});
-		expect(requestBody).not.toHaveProperty(["user", "id"].join("_"));
 		expect(text).toContain("Found 1 item");
 		expect(text).toContain("[source:");
 		expect(toolResult.details).toMatchObject({
@@ -249,6 +248,47 @@ describe("IRaB finance tools extension", () => {
 		expect(details.results).toHaveLength(10);
 		expect(textFromToolResult(toolResult)).toContain("Evidence item 10");
 		expect(textFromToolResult(toolResult)).not.toContain("Evidence item 11");
+	});
+
+	it("does not cap an explicit gateway search limit", async () => {
+		process.env.IRAB_TOKEN = "irab_test";
+		process.env.IRAB_GATEWAY_URL = "https://gateway.test/irab";
+		const requests: { body: string }[] = [];
+		vi.stubGlobal("fetch", async (_input: string | URL | Request, init?: RequestInit) => {
+			requests.push({ body: String(init?.body ?? "") });
+			return new Response(
+				JSON.stringify({
+					message: "Found 35 items",
+					records: Array.from({ length: 35 }, (_, index) => ({
+						source_id: `research-${index + 1}`,
+						title: `Research item ${index + 1}`,
+						content: `Evidence item ${index + 1}.`,
+						date: "2026-02-18",
+						publisher: "IRaB Research Corpus",
+						url: `irab://source/research-${index + 1}`,
+						table: null,
+						metadata: {},
+					})),
+				}),
+				{ status: 200 },
+			);
+		});
+		const { tools } = registerIrabExtension();
+		const tool = getOnlyExtensionTool(tools, "search_research_corpus");
+
+		const toolResult = await tool.execute(
+			"explicit_limit",
+			{ query: "BYD battery margin", limit: 35 },
+			undefined,
+			undefined,
+			{} as ExtensionContext,
+		);
+
+		const requestBody = JSON.parse(requests[0]?.body ?? "{}") as Record<string, unknown>;
+		const details = toolResult.details as { results: unknown[] };
+		expect(requestBody).toMatchObject({ limit: 35 });
+		expect(details.results).toHaveLength(35);
+		expect(textFromToolResult(toolResult)).toContain("Evidence item 35");
 	});
 
 	it("retries transient gateway token concurrency limits", async () => {

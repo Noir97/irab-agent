@@ -7,7 +7,6 @@ import type { ExtensionAPI, ProviderConfig, ToolDefinition } from "@earendil-wor
 import { Type } from "typebox";
 
 const DEFAULT_LIMIT = 10;
-const MAX_LIMIT = 30;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_RETRY_BASE_MS = 250;
 const MAX_GATEWAY_429_ATTEMPTS = 6;
@@ -345,7 +344,7 @@ function gatewayConfig(): GatewayConfig {
 
 function normalizeLimit(limit: number | undefined): number {
 	if (limit === undefined || !Number.isFinite(limit)) return DEFAULT_LIMIT;
-	return Math.max(1, Math.min(MAX_LIMIT, Math.trunc(limit)));
+	return Math.max(1, Math.trunc(limit));
 }
 
 let nextArtifactId = 1;
@@ -1471,7 +1470,7 @@ const commonSearchParameters = {
 	query: Type.String({
 		description: "Research query. Include company, ticker, market, event, metric, or date constraints when known.",
 	}),
-	limit: Type.Optional(Type.Number({ description: "Maximum evidence records to return. Defaults to 10, max 30." })),
+	limit: Type.Optional(Type.Number({ description: "Maximum evidence records to return. Defaults to 10." })),
 };
 
 const searchResearchCorpusParameters = Type.Object({
