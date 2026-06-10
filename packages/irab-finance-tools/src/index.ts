@@ -6,8 +6,8 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ProviderConfig, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-const DEFAULT_LIMIT = 5;
-const MAX_LIMIT = 10;
+const DEFAULT_LIMIT = 10;
+const MAX_LIMIT = 30;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_RETRY_BASE_MS = 250;
 const MAX_GATEWAY_429_ATTEMPTS = 6;
@@ -1471,7 +1471,7 @@ const commonSearchParameters = {
 	query: Type.String({
 		description: "Research query. Include company, ticker, market, event, metric, or date constraints when known.",
 	}),
-	limit: Type.Optional(Type.Number({ description: "Maximum evidence records to return. Defaults to 5." })),
+	limit: Type.Optional(Type.Number({ description: "Maximum evidence records to return. Defaults to 10, max 30." })),
 };
 
 const searchResearchCorpusParameters = Type.Object({
