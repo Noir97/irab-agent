@@ -55,7 +55,13 @@ const deepTaskReasoningReplayModelIds = [
 	"qwen3.7-max",
 ];
 
-const irabEnvKeys = ["IRAB_TOKEN", "IRAB_GATEWAY_URL", "IRAB_TOOL_TIMEOUT_MS", "IRAB_ARTIFACT_DIR"];
+const irabEnvKeys = [
+	"IRAB_TOKEN",
+	"IRAB_GATEWAY_URL",
+	"IRAB_TOOL_TIMEOUT_MS",
+	"IRAB_TOOL_RETRY_BASE_MS",
+	"IRAB_ARTIFACT_DIR",
+];
 
 function clearIrabEnv(): void {
 	for (const key of irabEnvKeys) {
@@ -201,5 +207,50 @@ describe("IRaB finance tools extension", () => {
 			endpoint: "https://gateway.test/irab/v1/tools/search_research_corpus",
 			recording_id: "rec_1",
 		});
+	});
+
+	it("retries transient gateway token concurrency limits", async () => {
+		process.env.IRAB_TOKEN = "irab_test";
+		process.env.IRAB_GATEWAY_URL = "https://gateway.test/irab";
+		process.env.IRAB_TOOL_RETRY_BASE_MS = "1";
+		const responses = [
+			new Response(JSON.stringify({ error: "IRAB token concurrency limit exceeded" }), { status: 429 }),
+			new Response(
+				JSON.stringify({
+					message: "Found 1 item",
+					records: [
+						{
+							source_id: "research-byd-margin",
+							title: "BYD 2025 Q4 margin review",
+							content: "BYD battery margin evidence.",
+							date: "2026-02-18",
+							publisher: "IRaB Research Corpus",
+							url: "irab://source/research-byd-margin",
+							table: null,
+							metadata: {},
+						},
+					],
+				}),
+				{ status: 200 },
+			),
+		];
+		vi.stubGlobal("fetch", async () => {
+			const response = responses.shift();
+			if (!response) throw new Error("Unexpected extra request");
+			return response;
+		});
+		const { tools } = registerIrabExtension();
+		const tool = getOnlyExtensionTool(tools, "search_research_corpus");
+
+		const toolResult = await tool.execute(
+			"retry_gateway",
+			{ query: "BYD battery margin", limit: 1 },
+			undefined,
+			undefined,
+			{} as ExtensionContext,
+		);
+
+		expect(responses).toHaveLength(0);
+		expect(textFromToolResult(toolResult)).toContain("Found 1 item");
 	});
 });

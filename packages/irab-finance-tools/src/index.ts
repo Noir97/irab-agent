@@ -9,6 +9,9 @@ import { Type } from "typebox";
 const DEFAULT_LIMIT = 5;
 const MAX_LIMIT = 10;
 const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_RETRY_BASE_MS = 250;
+const MAX_GATEWAY_429_ATTEMPTS = 6;
+const MAX_RETRY_DELAY_MS = 2_000;
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const DEFAULT_RABYTE_BASE_URL = "https://test-llm.rabyte.cn";
 const DEFAULT_IRAB_GATEWAY_BASE_URL = `${DEFAULT_RABYTE_BASE_URL}/irab`;
@@ -125,6 +128,7 @@ type GatewayConfig = {
 	baseUrl: string;
 	apiKey: string;
 	toolTimeoutMs: number;
+	toolRetryBaseMs: number;
 };
 
 type HttpJsonResult = {
@@ -335,6 +339,7 @@ function gatewayConfig(): GatewayConfig {
 		baseUrl: openAIBaseUrl(gatewayBaseUrl()),
 		apiKey: requireConfig(env("IRAB_TOKEN"), "IRAB_TOKEN"),
 		toolTimeoutMs: numberEnv("IRAB_TOOL_TIMEOUT_MS", DEFAULT_TIMEOUT_MS),
+		toolRetryBaseMs: numberEnv("IRAB_TOOL_RETRY_BASE_MS", DEFAULT_RETRY_BASE_MS),
 	};
 }
 
@@ -1213,30 +1218,56 @@ async function postJson(
 	headers: Record<string, string>,
 	signal: AbortSignal | undefined,
 	timeoutMs: number,
+	retryBaseMs: number,
 ): Promise<HttpJsonResult> {
-	const controller = new AbortController();
-	const abort = () => controller.abort(signal?.reason);
-	const timeout = setTimeout(() => controller.abort(new Error(`Request timed out after ${timeoutMs}ms`)), timeoutMs);
-	if (signal?.aborted) abort();
-	signal?.addEventListener("abort", abort, { once: true });
-
-	try {
-		const response = await fetch(endpoint, {
-			method: "POST",
-			headers: { "Content-Type": "application/json", ...headers },
-			body: JSON.stringify(body),
-			signal: controller.signal,
-		});
-		const text = await response.text();
-		const payload = parseJsonResponse(text);
-		if (!response.ok) {
-			throw new Error(`HTTP ${response.status} from ${endpoint}: ${text.slice(0, 300)}`);
+	for (let attempt = 1; attempt <= MAX_GATEWAY_429_ATTEMPTS; attempt += 1) {
+		if (signal?.aborted) {
+			throw signal.reason instanceof Error ? signal.reason : new Error("Request aborted");
 		}
-		return { status: response.status, payload };
-	} finally {
-		clearTimeout(timeout);
-		signal?.removeEventListener("abort", abort);
+
+		const controller = new AbortController();
+		const abort = () => controller.abort(signal?.reason);
+		const timeout = setTimeout(
+			() => controller.abort(new Error(`Request timed out after ${timeoutMs}ms`)),
+			timeoutMs,
+		);
+		let retryDelayMs: number | undefined;
+		if (signal?.aborted) abort();
+		signal?.addEventListener("abort", abort, { once: true });
+
+		try {
+			const response = await fetch(endpoint, {
+				method: "POST",
+				headers: { "Content-Type": "application/json", ...headers },
+				body: JSON.stringify(body),
+				signal: controller.signal,
+			});
+			const text = await response.text();
+			const payload = parseJsonResponse(text);
+			if (response.ok) return { status: response.status, payload };
+			const retryableTokenLimit =
+				response.status === 429 &&
+				attempt < MAX_GATEWAY_429_ATTEMPTS &&
+				(text.includes("IRAB token concurrency limit exceeded") || text.includes("IRAB token QPS limit exceeded"));
+			if (retryableTokenLimit) {
+				retryDelayMs = Math.min(retryBaseMs * 2 ** (attempt - 1), MAX_RETRY_DELAY_MS);
+			} else {
+				throw new Error(`HTTP ${response.status} from ${endpoint}: ${text.slice(0, 300)}`);
+			}
+		} finally {
+			clearTimeout(timeout);
+			signal?.removeEventListener("abort", abort);
+		}
+
+		if (retryDelayMs === undefined) break;
+		await new Promise((resolve) => {
+			setTimeout(resolve, retryDelayMs);
+		});
+		if (signal?.aborted) {
+			throw signal.reason instanceof Error ? signal.reason : new Error("Request aborted");
+		}
 	}
+	throw new Error(`HTTP 429 from ${endpoint}: gateway token limit retry budget exhausted`);
 }
 
 function gatewayToolEndpoint(config: GatewayConfig, tool: IrabToolName): string {
@@ -1308,6 +1339,7 @@ async function gatewaySearchTool(
 		gatewayHeaders(config),
 		signal,
 		config.toolTimeoutMs,
+		config.toolRetryBaseMs,
 	);
 	const results = gatewayResponseRecords(tool, response.payload, params.query, params.limit);
 	return buildSearchResult(
@@ -1330,7 +1362,14 @@ async function gatewayFetchWeb(
 ): Promise<AgentToolResult<IrabToolDetails>> {
 	const config = gatewayConfig();
 	const endpoint = gatewayToolEndpoint(config, "read_public_webpage");
-	const response = await postJson(endpoint, { url, format }, gatewayHeaders(config), signal, config.toolTimeoutMs);
+	const response = await postJson(
+		endpoint,
+		{ url, format },
+		gatewayHeaders(config),
+		signal,
+		config.toolTimeoutMs,
+		config.toolRetryBaseMs,
+	);
 	const results = gatewayResponseRecords("read_public_webpage", response.payload, url, DEFAULT_LIMIT);
 	const artifactDir = createArtifactDir("read_public_webpage");
 	const artifacts = await artifactsFromRecords(
