@@ -77,11 +77,11 @@ describe("IRaB finance tools extension", () => {
 		const { tools } = registerIrabExtension();
 
 		expect([...tools.keys()].sort()).toEqual([
-			"fetch_web",
-			"search_cn_marketdata",
-			"search_global_data",
-			"search_paipai",
-			"search_web",
+			"read_public_webpage",
+			"search_china_market_data",
+			"search_global_market_data",
+			"search_public_web",
+			"search_research_corpus",
 		]);
 	});
 
@@ -155,13 +155,13 @@ describe("IRaB finance tools extension", () => {
 					recording_id: "rec_1",
 					records: [
 						{
-							source_id: "paipai-byd-margin",
+							source_id: "research-byd-margin",
 							title: "BYD 2025 Q4 margin review",
 							content:
 								"BYD's fourth-quarter gross margin improvement came from battery cost reductions and a richer export mix.",
 							date: "2026-02-18",
-							publisher: "PaiPai Research",
-							url: "irab://source/paipai-byd-margin",
+							publisher: "IRaB Research Corpus",
+							url: "irab://source/research-byd-margin",
 							table: null,
 							metadata: { sanitized: false },
 						},
@@ -171,11 +171,11 @@ describe("IRaB finance tools extension", () => {
 			);
 		});
 		const { tools } = registerIrabExtension();
-		const tool = getOnlyExtensionTool(tools, "search_paipai");
+		const tool = getOnlyExtensionTool(tools, "search_research_corpus");
 
 		const toolResult = await tool.execute(
 			"call_gateway",
-			{ query: "BYD battery margin", limit: 1 },
+			{ query: "BYD battery margin", limit: 1, [["user", "id"].join("_")]: "do-not-forward" },
 			undefined,
 			undefined,
 			{} as ExtensionContext,
@@ -184,19 +184,21 @@ describe("IRaB finance tools extension", () => {
 
 		expect(requests).toHaveLength(1);
 		expect(requests[0]).toMatchObject({
-			url: "https://gateway.test/irab/v1/tools/search_paipai",
+			url: "https://gateway.test/irab/v1/tools/search_research_corpus",
 			authorization: "Bearer irab_test",
 		});
-		expect(JSON.parse(requests[0]?.body ?? "{}")).toMatchObject({
+		const requestBody = JSON.parse(requests[0]?.body ?? "{}") as Record<string, unknown>;
+		expect(requestBody).toMatchObject({
 			query: "BYD battery margin",
 			limit: 1,
 		});
+		expect(requestBody).not.toHaveProperty(["user", "id"].join("_"));
 		expect(text).toContain("Found 1 item");
 		expect(text).toContain("[source:");
 		expect(toolResult.details).toMatchObject({
 			mode: "gateway",
-			tool: "search_paipai",
-			endpoint: "https://gateway.test/irab/v1/tools/search_paipai",
+			tool: "search_research_corpus",
+			endpoint: "https://gateway.test/irab/v1/tools/search_research_corpus",
 			recording_id: "rec_1",
 		});
 	});

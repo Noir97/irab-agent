@@ -19,19 +19,20 @@ evidence, and citation requirements.
 
 Tier 1 tools are the primary benchmark capabilities:
 
-- `search_paipai`: search internal financial research evidence such as reports,
-  announcements, meeting notes, comments, and personal knowledge sources.
-- `search_global_data`: retrieve structured global-market data for HK/US
+- `search_research_corpus`: semantic search over approved unstructured
+  investment-research materials such as reports, announcements, meeting notes,
+  commentary, and authorized user-provided materials.
+- `search_global_market_data`: retrieve structured global-market data for HK/US
   equities, indices, ETFs, FX, crypto, commodities, filings, and related data.
-- `search_cn_marketdata`: retrieve China macro, rates, industry, A-share, and
+- `search_china_market_data`: retrieve China macro, rates, industry, A-share, and
   domestic index data.
 
 Tier 2 tools are supporting public-web capabilities:
 
-- `search_web`: search public internet sources when internal evidence is
+- `search_public_web`: search public internet sources when corpus evidence is
   insufficient or current public information is required.
-- `fetch_web`: fetch and read a specific URL returned by search or supplied in a
-  benchmark task.
+- `read_public_webpage`: fetch and read a specific URL returned by search or
+  supplied in a benchmark task.
 
 ## Architecture Direction
 
@@ -65,12 +66,13 @@ The preferred access model has three layers:
 3. Sanitized replay mode: public or external reproducibility runs use exported
    fixtures created from raw live recordings after review and sanitization.
 
-Gateway tokens must never be raw internal DeepTask, PaiPai, database, search, or
-market-data credentials. They should only authorize calls through an IRaB
+Gateway tokens must never be raw internal database, search, market-data, or
+source-service credentials. They should only authorize calls through an IRaB
 Evaluation Gateway with these controls:
 
-- Tool whitelist limited to benchmark tools such as `search_paipai`,
-  `search_global_data`, `search_cn_marketdata`, `search_web`, and `fetch_web`.
+- Tool whitelist limited to benchmark tools such as `search_research_corpus`,
+  `search_global_market_data`, `search_china_market_data`, `search_public_web`,
+  and `read_public_webpage`.
 - Scope binding by evaluator, organization, benchmark task set, model family,
   and optional `task_id`.
 - Expiration, quota, QPS, concurrency, and total-budget limits.
@@ -98,8 +100,9 @@ IRAB_TOKEN=irab_...
 The client extension uses that token for both:
 
 - OpenAI-compatible model calls through the private gateway.
-- Tool calls through the private gateway for `search_paipai`,
-  `search_global_data`, `search_cn_marketdata`, `search_web`, and `fetch_web`.
+- Tool calls through the private gateway for `search_research_corpus`,
+  `search_global_market_data`, `search_china_market_data`, `search_public_web`,
+  and `read_public_webpage`.
 
 Gateway deployment, token application, approval, revocation, service-side source
 credentials, and audit operations live in the private gateway repository. They

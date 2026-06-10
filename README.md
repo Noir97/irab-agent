@@ -115,11 +115,11 @@ gateway with `IRAB_TOKEN`.
 
 | Tool | Purpose |
 | --- | --- |
-| `search_paipai` | Search internal investment-research evidence such as reports, announcements, meeting notes, comments, and personal knowledge sources. |
-| `search_global_data` | Retrieve structured global-market data for HK/US equities, indices, ETFs, FX, crypto, commodities, filings, and related data. |
-| `search_cn_marketdata` | Retrieve China macro, rates, industry, A-share, and domestic index data. |
-| `search_web` | Search public web sources when public or current evidence is needed. |
-| `fetch_web` | Fetch and read a specific URL returned by search or supplied by a task. |
+| `search_research_corpus` | Semantic search over approved unstructured investment-research materials such as reports, announcements, meeting notes, commentary, and authorized user-provided materials. |
+| `search_global_market_data` | Retrieve structured global-market data for HK/US equities, indices, ETFs, FX, crypto, commodities, filings, and related data. |
+| `search_china_market_data` | Retrieve China macro, rates, industry, A-share, and domestic index data. |
+| `search_public_web` | Search public web sources when public or current evidence is needed. |
+| `read_public_webpage` | Fetch and read a specific URL returned by search or supplied by a task. |
 
 Tool results expose visible citation markers such as `[source:3]`. The answer
 must copy these markers inline after the supported claim.

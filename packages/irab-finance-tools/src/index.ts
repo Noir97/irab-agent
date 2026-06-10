@@ -14,8 +14,12 @@ const DEFAULT_RABYTE_BASE_URL = "https://test-llm.rabyte.cn";
 const DEFAULT_IRAB_GATEWAY_BASE_URL = `${DEFAULT_RABYTE_BASE_URL}/irab`;
 const DEFAULT_ARTIFACT_DIR = join(REPO_ROOT, "tmp", "irab-artifacts");
 
-type IrabSearchToolName = "search_paipai" | "search_global_data" | "search_cn_marketdata" | "search_web";
-type IrabToolName = IrabSearchToolName | "fetch_web";
+type IrabSearchToolName =
+	| "search_research_corpus"
+	| "search_global_market_data"
+	| "search_china_market_data"
+	| "search_public_web";
+type IrabToolName = IrabSearchToolName | "read_public_webpage";
 
 type EvidenceCell = string | number | boolean | null;
 
@@ -115,7 +119,6 @@ type SearchExecutionParams = {
 	end_time?: string;
 	include_domains?: string[];
 	exclude_domains?: string[];
-	user_id?: string;
 };
 
 type GatewayConfig = {
@@ -926,7 +929,7 @@ function globalDataId(index = 0): string {
 }
 
 function normalizeGlobalDataRecords(payload: unknown, query: string): EvidenceRecord[] {
-	const alphaSource = ["「Alpha派」全球数据库"];
+	const globalDataSource = ["IRaB global market data"];
 	const indicatorTables = new Map<string, EvidenceRecord>();
 	for (const [index, item] of payloadDataRecords(payload).entries()) {
 		const parsedTable = markdownTableFromChunks(item);
@@ -939,11 +942,11 @@ function normalizeGlobalDataRecords(payload: unknown, query: string): EvidenceRe
 			id: sourceId,
 			origin_id: sourceId,
 			indic_names: recordValue(item, "indic_names") ?? [],
-			inst_source: alphaSource,
-			orig_inst_source: alphaSource,
+			inst_source: globalDataSource,
+			orig_inst_source: globalDataSource,
 			publish_date: "",
 			chunk: valueToContent(recordValue(item, "chunks")),
-			search_type: "global_search",
+			search_type: "global_market_data",
 		};
 		let table = parsedTable;
 		for (const timeColumn of ["date", "Date", "publishedDate", "fillingDate", "acceptedDate"]) {
@@ -960,10 +963,10 @@ function normalizeGlobalDataRecords(payload: unknown, query: string): EvidenceRe
 			"acceptedDate",
 		]);
 		indicatorTables.set(indicatorName, {
-			source_id: normalizeSourceId("global-data", sourceId, index),
+			source_id: normalizeSourceId("global-market-data", sourceId, index),
 			title: indicatorName,
 			date: endTime,
-			publisher: alphaSource.join("|"),
+			publisher: globalDataSource.join("|"),
 			url: "",
 			content: indicatorName,
 			table,
@@ -976,7 +979,7 @@ function normalizeGlobalDataRecords(payload: unknown, query: string): EvidenceRe
 				source_id: sourceId,
 				source_expr: `edb_${sourceId}`,
 				source_data: sourceData,
-				orig_inst_source: alphaSource,
+				orig_inst_source: globalDataSource,
 			},
 		});
 	}
@@ -1168,7 +1171,7 @@ async function artifactsFromRecords(
 	timeoutMs: number,
 ): Promise<IrabArtifact[]> {
 	const artifacts: IrabArtifact[] = [];
-	const tableTool = tool === "search_global_data" || tool === "search_cn_marketdata";
+	const tableTool = tool === "search_global_market_data" || tool === "search_china_market_data";
 	for (const record of records) {
 		if (tableTool) {
 			const tableArtifact = tableArtifactFromRecord(tool, record, artifactDir);
@@ -1179,7 +1182,7 @@ async function artifactsFromRecords(
 		}
 
 		const imageArtifact =
-			tool === "search_paipai"
+			tool === "search_research_corpus"
 				? await imageArtifactFromRecord(tool, record, artifactDir, signal, timeoutMs)
 				: undefined;
 		artifacts.push(imageArtifact ?? textArtifactFromRecord(tool, record));
@@ -1261,10 +1264,23 @@ function gatewayResponseRecords(
 	}
 
 	const upstreamPayload = recordValue(response, "payload") ?? payload;
-	if (tool === "search_global_data") return normalizeGlobalDataRecords(upstreamPayload, query).slice(0, cappedLimit);
-	if (tool === "search_cn_marketdata") return normalizeSimpleDataRecords(upstreamPayload, query).slice(0, cappedLimit);
-	if (tool === "search_web") return normalizeWebRecords(upstreamPayload, cappedLimit);
+	if (tool === "search_global_market_data")
+		return normalizeGlobalDataRecords(upstreamPayload, query).slice(0, cappedLimit);
+	if (tool === "search_china_market_data")
+		return normalizeSimpleDataRecords(upstreamPayload, query).slice(0, cappedLimit);
+	if (tool === "search_public_web") return normalizeWebRecords(upstreamPayload, cappedLimit);
 	return normalizePayloadRecords(tool, upstreamPayload, cappedLimit);
+}
+
+function gatewaySearchRequestBody(params: SearchExecutionParams): Record<string, unknown> {
+	const body: Record<string, unknown> = { query: params.query };
+	if (params.limit !== undefined) body.limit = params.limit;
+	if (params.sources !== undefined) body.sources = params.sources;
+	if (params.start_time !== undefined) body.start_time = params.start_time;
+	if (params.end_time !== undefined) body.end_time = params.end_time;
+	if (params.include_domains !== undefined) body.include_domains = params.include_domains;
+	if (params.exclude_domains !== undefined) body.exclude_domains = params.exclude_domains;
+	return body;
 }
 
 function gatewayResponseMessage(payload: unknown): string | undefined {
@@ -1286,7 +1302,13 @@ async function gatewaySearchTool(
 ): Promise<AgentToolResult<IrabToolDetails>> {
 	const config = gatewayConfig();
 	const endpoint = gatewayToolEndpoint(config, tool);
-	const response = await postJson(endpoint, params, gatewayHeaders(config), signal, config.toolTimeoutMs);
+	const response = await postJson(
+		endpoint,
+		gatewaySearchRequestBody(params),
+		gatewayHeaders(config),
+		signal,
+		config.toolTimeoutMs,
+	);
 	const results = gatewayResponseRecords(tool, response.payload, params.query, params.limit);
 	return buildSearchResult(
 		"gateway",
@@ -1307,15 +1329,21 @@ async function gatewayFetchWeb(
 	signal: AbortSignal | undefined,
 ): Promise<AgentToolResult<IrabToolDetails>> {
 	const config = gatewayConfig();
-	const endpoint = gatewayToolEndpoint(config, "fetch_web");
+	const endpoint = gatewayToolEndpoint(config, "read_public_webpage");
 	const response = await postJson(endpoint, { url, format }, gatewayHeaders(config), signal, config.toolTimeoutMs);
-	const results = gatewayResponseRecords("fetch_web", response.payload, url, DEFAULT_LIMIT);
-	const artifactDir = createArtifactDir("fetch_web");
-	const artifacts = await artifactsFromRecords("fetch_web", results, artifactDir, signal, config.toolTimeoutMs);
+	const results = gatewayResponseRecords("read_public_webpage", response.payload, url, DEFAULT_LIMIT);
+	const artifactDir = createArtifactDir("read_public_webpage");
+	const artifacts = await artifactsFromRecords(
+		"read_public_webpage",
+		results,
+		artifactDir,
+		signal,
+		config.toolTimeoutMs,
+	);
 	return buildToolResult(
 		{
 			mode: "gateway",
-			tool: "fetch_web",
+			tool: "read_public_webpage",
 			query: url,
 			endpoint,
 			results,
@@ -1339,9 +1367,9 @@ function searchMessage(
 	if (artifactCount === 0) {
 		return `No ${mode} evidence matched "${query}". Do not invent citations.`;
 	}
-	if (tool === "search_paipai") return `Found ${artifactCount} items`;
-	if (tool === "search_web") return `Found ${artifactCount} results`;
-	if (tool === "search_global_data") {
+	if (tool === "search_research_corpus") return `Found ${artifactCount} items`;
+	if (tool === "search_public_web") return `Found ${artifactCount} results`;
+	if (tool === "search_global_market_data") {
 		return `Successfully fetched ${artifactCount} data table${artifactCount === 1 ? "" : "s"} from ${recordCount} result${recordCount === 1 ? "" : "s"}`;
 	}
 	return `Got ${artifactCount} table${artifactCount === 1 ? "" : "s"}`;
@@ -1407,33 +1435,34 @@ const commonSearchParameters = {
 	limit: Type.Optional(Type.Number({ description: "Maximum evidence records to return. Defaults to 5." })),
 };
 
-const searchPaipaiParameters = Type.Object({
+const searchResearchCorpusParameters = Type.Object({
 	...commonSearchParameters,
 	sources: Type.Optional(
 		Type.Array(Type.String(), {
-			description: "Optional PaiPai article types such as ann, report, roadShow, or comment.",
+			description:
+				"Optional corpus source filters such as ann, report, roadShow, comment, or other approved source types.",
 		}),
 	),
 	start_time: Type.Optional(Type.String({ description: "Optional start date, YYYY-MM-DD." })),
 	end_time: Type.Optional(Type.String({ description: "Optional end date, YYYY-MM-DD." })),
-	user_id: Type.Optional(Type.String({ description: "Optional user id for PaiPai ACL/context routing." })),
 });
 
-const searchPaipaiTool = {
-	name: "search_paipai",
-	label: "Search PaiPai",
-	description: "Search internal investment research evidence such as reports, announcements, notes, and comments.",
-	promptSnippet: "Search internal investment research evidence.",
+const searchResearchCorpusTool = {
+	name: "search_research_corpus",
+	label: "Search Research Corpus",
+	description:
+		"Semantic search over an approved unstructured investment-research corpus, including reports, announcements, meeting notes, commentary, and authorized user-provided materials.",
+	promptSnippet: "Semantic search over the unstructured investment-research corpus.",
 	promptGuidelines: [
-		"Use search_paipai for company research, analyst notes, announcements, meeting notes, and internal evidence.",
-		"Copy the visible [source:x] marker exactly when citing PaiPai evidence.",
+		"Use search_research_corpus for fragmented financial facts or opinions in reports, announcements, meeting notes, commentary, and authorized user-provided materials.",
+		"Copy the visible [source:x] marker exactly when citing corpus evidence.",
 	],
-	parameters: searchPaipaiParameters,
+	parameters: searchResearchCorpusParameters,
 	executionMode: "parallel",
 	async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
-		return executeSearchTool("search_paipai", params, signal);
+		return executeSearchTool("search_research_corpus", params, signal);
 	},
-} satisfies ToolDefinition<typeof searchPaipaiParameters, IrabToolDetails>;
+} satisfies ToolDefinition<typeof searchResearchCorpusParameters, IrabToolDetails>;
 
 const searchGlobalDataParameters = Type.Object({
 	...commonSearchParameters,
@@ -1443,19 +1472,19 @@ const searchGlobalDataParameters = Type.Object({
 });
 
 const searchGlobalDataTool = {
-	name: "search_global_data",
-	label: "Search Global Data",
+	name: "search_global_market_data",
+	label: "Search Global Market Data",
 	description: "Search structured global-market data for HK/US equities, indices, ETFs, FX, crypto, and commodities.",
 	promptSnippet: "Search global market data evidence.",
 	promptGuidelines: [
-		"Use search_global_data for HK/US equities, ETFs, indices, FX, crypto, commodities, filings, and global-market metrics.",
+		"Use search_global_market_data for HK/US equities, ETFs, indices, FX, crypto, commodities, filings, and global-market metrics.",
 		"Cite structured market data with the visible [source:x] marker immediately after the supported number or statement.",
 	],
 	parameters: searchGlobalDataParameters,
 	executionMode: "parallel",
 	async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
 		const query = [params.query, ...(params.symbols ?? [])].join(" ");
-		return executeSearchTool("search_global_data", { ...params, query }, signal);
+		return executeSearchTool("search_global_market_data", { ...params, query }, signal);
 	},
 } satisfies ToolDefinition<typeof searchGlobalDataParameters, IrabToolDetails>;
 
@@ -1467,19 +1496,19 @@ const searchCnMarketDataParameters = Type.Object({
 });
 
 const searchCnMarketDataTool = {
-	name: "search_cn_marketdata",
+	name: "search_china_market_data",
 	label: "Search China Market Data",
 	description: "Search China macro, rates, industry, A-share, and domestic index data.",
 	promptSnippet: "Search China market data evidence.",
 	promptGuidelines: [
-		"Use search_cn_marketdata for China macro, rates, industries, A-shares, and domestic index evidence.",
+		"Use search_china_market_data for China macro, rates, industries, A-shares, and domestic index evidence.",
 		"Do not cite China market-data values unless their visible [source:x] marker appears in a tool result.",
 	],
 	parameters: searchCnMarketDataParameters,
 	executionMode: "parallel",
 	async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
 		const query = [params.query, ...(params.indicators ?? [])].join(" ");
-		return executeSearchTool("search_cn_marketdata", { ...params, query }, signal);
+		return executeSearchTool("search_china_market_data", { ...params, query }, signal);
 	},
 } satisfies ToolDefinition<typeof searchCnMarketDataParameters, IrabToolDetails>;
 
@@ -1492,19 +1521,20 @@ const searchWebParameters = Type.Object({
 });
 
 const searchWebTool = {
-	name: "search_web",
-	label: "Search Web",
-	description: "Search public-web evidence when internal evidence is insufficient or public information is required.",
+	name: "search_public_web",
+	label: "Search Public Web",
+	description:
+		"Search public-web evidence when corpus or market-data evidence is insufficient or public information is required.",
 	promptSnippet: "Search public-web evidence.",
 	promptGuidelines: [
-		"Use search_web for public sources, primary filings, regulator pages, or current public context.",
+		"Use search_public_web for public sources, primary filings, regulator pages, or current public context.",
 		"Copy the visible [source:x] marker exactly when citing web evidence.",
-		"Use fetch_web before relying on a specific URL when the task requires reading that source directly.",
+		"Use read_public_webpage before relying on a specific URL when the task requires reading that source directly.",
 	],
 	parameters: searchWebParameters,
 	executionMode: "parallel",
 	async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
-		return executeSearchTool("search_web", params, signal);
+		return executeSearchTool("search_public_web", params, signal);
 	},
 } satisfies ToolDefinition<typeof searchWebParameters, IrabToolDetails>;
 
@@ -1514,14 +1544,14 @@ const fetchWebParameters = Type.Object({
 });
 
 const fetchWebTool = {
-	name: "fetch_web",
-	label: "Fetch Web",
+	name: "read_public_webpage",
+	label: "Read Public Webpage",
 	description: "Fetch a specific URL and return normalized evidence for citation.",
 	promptSnippet: "Fetch a public URL.",
 	promptGuidelines: [
-		"Use fetch_web for a URL returned by search_web or supplied in the benchmark task.",
+		"Use read_public_webpage for a URL returned by search_public_web or supplied in the benchmark task.",
 		"Copy the visible [source:x] marker exactly when citing fetched web evidence.",
-		"If fetch_web returns no content, say the source is unavailable instead of inventing a citation.",
+		"If read_public_webpage returns no content, say the source is unavailable instead of inventing a citation.",
 	],
 	parameters: fetchWebParameters,
 	executionMode: "parallel",
@@ -1533,7 +1563,7 @@ const fetchWebTool = {
 export default function irabFinanceToolsExtension(pi: ExtensionAPI) {
 	loadLocalEnv();
 	registerRabyteProvider(pi);
-	pi.registerTool(searchPaipaiTool);
+	pi.registerTool(searchResearchCorpusTool);
 	pi.registerTool(searchGlobalDataTool);
 	pi.registerTool(searchCnMarketDataTool);
 	pi.registerTool(searchWebTool);

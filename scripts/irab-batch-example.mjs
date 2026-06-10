@@ -21,11 +21,11 @@ const DEFAULT_CONCURRENCY = 10;
 const DEFAULT_OUT_DIR = join(REPO_ROOT, "tmp", "irab-batch-runs", new Date().toISOString().replace(/[:.]/gu, "-"));
 const DEFAULT_PI_SKIP_VERSION_CHECK = "1";
 const IRAB_TOOL_NAMES = new Set([
-	"search_paipai",
-	"search_global_data",
-	"search_cn_marketdata",
-	"search_web",
-	"fetch_web",
+	"search_research_corpus",
+	"search_global_market_data",
+	"search_china_market_data",
+	"search_public_web",
+	"read_public_webpage",
 ]);
 
 function printHelp() {
