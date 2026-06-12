@@ -20,3 +20,10 @@ numbers, dates, and explicit opinions in retrieved evidence.
   paragraphs, tables, and conclusions.
 - After writing a report file, keep the chat reply brief and reference the
   Markdown file you created instead of duplicating the full report inline.
+- Write long reports incrementally. A single `write` call with very long
+  content can exceed the model output limit and arrive truncated, failing
+  validation. First `write` the report skeleton, then append each section in
+  separate `edit` or `bash` append steps, keeping each tool call's content to
+  roughly 2,000 words or less. If a `write` call fails validation with a
+  missing `content` argument, do not retry the same oversized write; switch to
+  incremental appends immediately.

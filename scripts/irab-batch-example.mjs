@@ -268,17 +268,32 @@ function runPiTask(task, options, paths) {
 			cwd: commandCwd,
 			env,
 			stdio: ["ignore", "pipe", "pipe"],
+			// Own process group so timeouts can kill Pi and all of its children,
+			// not just the wrapper shell.
+			detached: true,
 		});
+
+		const killTask = (signal) => {
+			try {
+				process.kill(-child.pid, signal);
+			} catch {
+				child.kill(signal);
+			}
+		};
 
 		let stdout = "";
 		let stderr = "";
 		let timedOut = false;
 		let timeout;
+		let killTimeout;
 
 		if (options.timeoutMs > 0) {
 			timeout = setTimeout(() => {
 				timedOut = true;
-				child.kill("SIGTERM");
+				killTask("SIGTERM");
+				killTimeout = setTimeout(() => {
+					killTask("SIGKILL");
+				}, 10_000);
 			}, options.timeoutMs);
 		}
 
@@ -292,6 +307,7 @@ function runPiTask(task, options, paths) {
 		});
 		child.on("close", (code, signal) => {
 			if (timeout) clearTimeout(timeout);
+			if (killTimeout) clearTimeout(killTimeout);
 			resolveTask({
 				id: task.id,
 				argv: args,
@@ -309,6 +325,7 @@ function runPiTask(task, options, paths) {
 		});
 		child.on("error", (error) => {
 			if (timeout) clearTimeout(timeout);
+			if (killTimeout) clearTimeout(killTimeout);
 			resolveTask({
 				id: task.id,
 				argv: args,
