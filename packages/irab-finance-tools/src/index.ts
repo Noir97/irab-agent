@@ -181,8 +181,8 @@ const rabyteModels = [
 		},
 	},
 	{
-		id: "wangsu-gpt-5.5",
-		name: "Wangsu GPT 5.5",
+		id: "openai-gpt-5.5",
+		name: "OpenAI GPT 5.5",
 		reasoning: true,
 		input: ["text", "image"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },

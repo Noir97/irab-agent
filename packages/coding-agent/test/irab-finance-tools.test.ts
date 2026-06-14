@@ -40,7 +40,7 @@ const requestedRabyteModelIds = [
 	"wangsu-claude-opus-4-6",
 	"openrouter-deepseek-v4-pro",
 	"glm-5.1-thinking",
-	"wangsu-gpt-5.5",
+	"openai-gpt-5.5",
 	"ucloud-claude-opus-4-8",
 	"qwen3.7-max",
 	"wangsu-gemini-3.5-flash",
@@ -111,7 +111,7 @@ describe("IRaB finance tools extension", () => {
 		expect(models.find((model) => model.id === "kimi-k2.6-thinking")?.compat).toMatchObject({
 			sendPromptCacheKey: true,
 		});
-		expect(models.find((model) => model.id === "wangsu-gpt-5.5")?.compat).toMatchObject({
+		expect(models.find((model) => model.id === "openai-gpt-5.5")?.compat).toMatchObject({
 			sendPromptCacheKey: true,
 		});
 		expect(models.find((model) => model.id === "ucloud-claude-opus-4-8")?.compat).toMatchObject({
