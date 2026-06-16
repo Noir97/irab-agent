@@ -36,7 +36,7 @@ credentials, or token-management secrets.
 To request access, submit the public token application form:
 
 ```text
-http://49.233.81.41/irab/apply
+http://irab.rabyte.cn/irab/apply
 ```
 
 The application asks for:
@@ -49,7 +49,7 @@ Rejected requests receive a status update email. Open an approved claim link
 once and store the displayed environment variables:
 
 ```bash
-IRAB_GATEWAY_URL=http://49.233.81.41/irab
+IRAB_GATEWAY_URL=http://irab.rabyte.cn/irab
 IRAB_TOKEN=irab_...
 ```
 

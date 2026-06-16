@@ -93,7 +93,7 @@ recordings.
 Approved external evaluators configure:
 
 ```bash
-IRAB_GATEWAY_URL=https://...
+IRAB_GATEWAY_URL=http://irab.rabyte.cn/irab
 IRAB_TOKEN=irab_...
 ```
 
