@@ -11,6 +11,7 @@ const PI_SCRIPT = process.env.IRAB_BATCH_PI_SCRIPT
 	: join(REPO_ROOT, "pi-test.sh");
 const PROJECT_APPEND_SYSTEM_PROMPT = join(REPO_ROOT, ".pi", "APPEND_SYSTEM.md");
 const GUIDED_RESEARCH_APPEND_SYSTEM_PROMPT = join(REPO_ROOT, ".pi", "IRAB_GUIDED_RESEARCH.md");
+const GUIDED_FINAL_WRITER_APPEND_SYSTEM_PROMPT = join(REPO_ROOT, ".pi", "IRAB_GUIDED_FINAL_WRITER.md");
 const PROJECT_EXTENSION_PATHS = [
 	join(REPO_ROOT, ".pi", "extensions", "irab-finance-tools", "index.ts"),
 	join(REPO_ROOT, ".pi", "extensions", "prompt-url-widget.ts"),
@@ -23,6 +24,10 @@ const DEFAULT_OUT_DIR = join(REPO_ROOT, "tmp", "irab-batch-runs", new Date().toI
 const DEFAULT_PI_SKIP_VERSION_CHECK = "1";
 const DEFAULT_PROMPT_MODE = "raw";
 const PROMPT_MODES = new Set(["raw", "guided-research"]);
+const DISABLED_FINAL_WRITER_MODEL = "none";
+const DEFAULT_FINAL_WRITER_MODEL = "rabyte/openai-gpt-5.5";
+const FINAL_WRITER_MAX_TOOL_OUTPUT_CHARS = 240_000;
+const FINAL_WRITER_MAX_TOOL_OUTPUT_ITEM_CHARS = 50_000;
 const IRAB_TOOL_NAMES = new Set([
 	"search_research_corpus",
 	"search_global_market_data",
@@ -41,6 +46,9 @@ Options:
   --model <model>       Pi model. Default: ${DEFAULT_MODEL}
   --concurrency <n>     Parallel Pi processes. Default: ${DEFAULT_CONCURRENCY}
   --prompt-mode <mode>  Prompt mode: raw or guided-research. Default: ${DEFAULT_PROMPT_MODE}
+  --final-writer-model <model|none>
+                        Guided final writer model. Default: ${DEFAULT_FINAL_WRITER_MODEL};
+                        used only for guided-research. Use "none" to disable.
   --timeout-ms <n>      Per-task timeout. Default: 0, no timeout
   --dry-run             Validate input and write empty result files without running Pi
   --help                Show this help
@@ -51,13 +59,17 @@ Task JSONL fields:
   model                 Optional per-task model override
   name                  Optional Pi session name
   promptMode            Optional per-task prompt mode override
+  finalWriterModel      Optional guided final writer model override, or "none"
   appendSystemPrompt    Optional extra system prompt text
 
 Output layout:
   <out>/run.json
   <out>/tasks/<id>/answer.md
+  <out>/tasks/<id>/research-answer.md
   <out>/tasks/<id>/result.json
   <out>/tasks/<id>/events.jsonl
+  <out>/tasks/<id>/final-writer-input.md
+  <out>/tasks/<id>/final-writer-events.jsonl
   <out>/tasks/<id>/sources.json
   <out>/tasks/<id>/workspace/
   <out>/tasks/<id>/generated-files/
@@ -72,6 +84,7 @@ function parseArgs(argv) {
 		model: DEFAULT_MODEL,
 		concurrency: DEFAULT_CONCURRENCY,
 		promptMode: DEFAULT_PROMPT_MODE,
+		finalWriterModel: DEFAULT_FINAL_WRITER_MODEL,
 		timeoutMs: 0,
 		dryRun: false,
 		help: false,
@@ -98,6 +111,9 @@ function parseArgs(argv) {
 		} else if (arg === "--prompt-mode" && argv[index + 1]) {
 			options.promptMode = parsePromptMode(argv[index + 1], "--prompt-mode");
 			index += 1;
+		} else if (arg === "--final-writer-model" && argv[index + 1]) {
+			options.finalWriterModel = parseFinalWriterModel(argv[index + 1], "--final-writer-model");
+			index += 1;
 		} else if (arg === "--timeout-ms" && argv[index + 1]) {
 			options.timeoutMs = parseNonNegativeInteger(argv[index + 1], "--timeout-ms");
 			index += 1;
@@ -120,6 +136,14 @@ function parsePromptMode(value, label) {
 		throw new Error(`${label} must be one of: ${[...PROMPT_MODES].join(", ")}`);
 	}
 	return value;
+}
+
+function parseFinalWriterModel(value, label) {
+	const trimmed = value.trim();
+	if (!trimmed) {
+		throw new Error(`${label} must be a non-empty model id or "${DISABLED_FINAL_WRITER_MODEL}"`);
+	}
+	return trimmed;
 }
 
 function parsePositiveInteger(value, label) {
@@ -156,9 +180,10 @@ function parseTask(rawLine, lineNumber) {
 	const model = readOptionalStringField(parsed, "model", lineNumber);
 	const name = readOptionalStringField(parsed, "name", lineNumber);
 	const promptMode = readOptionalPromptModeField(parsed, "promptMode", lineNumber);
+	const finalWriterModel = readOptionalFinalWriterModelField(parsed, "finalWriterModel", lineNumber);
 	const appendSystemPrompt = readOptionalStringField(parsed, "appendSystemPrompt", lineNumber);
 
-	return { id, prompt, model, name, promptMode, appendSystemPrompt };
+	return { id, prompt, model, name, promptMode, finalWriterModel, appendSystemPrompt };
 }
 
 function readStringField(value, field, lineNumber) {
@@ -185,6 +210,15 @@ function readOptionalPromptModeField(value, field, lineNumber) {
 		throw new Error(`Line ${lineNumber} field ${field} must be a non-empty string when provided`);
 	}
 	return parsePromptMode(fieldValue.trim(), `Line ${lineNumber} field ${field}`);
+}
+
+function readOptionalFinalWriterModelField(value, field, lineNumber) {
+	const fieldValue = value[field];
+	if (fieldValue === undefined) return undefined;
+	if (typeof fieldValue !== "string" || !fieldValue.trim()) {
+		throw new Error(`Line ${lineNumber} field ${field} must be a non-empty string when provided`);
+	}
+	return parseFinalWriterModel(fieldValue, `Line ${lineNumber} field ${field}`);
 }
 
 async function readTasks(inputPath) {
@@ -216,8 +250,11 @@ function taskPaths(outDir, taskId) {
 		rawArtifactsDir: join(taskDir, "artifacts", "raw"),
 		copiedArtifactsDir: join(taskDir, "artifacts", "files"),
 		answerPath: join(taskDir, "answer.md"),
+		researchAnswerPath: join(taskDir, "research-answer.md"),
 		metaPath: join(taskDir, "result.json"),
 		eventsPath: join(taskDir, "events.jsonl"),
+		finalWriterPromptPath: join(taskDir, "final-writer-input.md"),
+		finalWriterEventsPath: join(taskDir, "final-writer-events.jsonl"),
 		sourcesPath: join(taskDir, "sources.json"),
 	};
 }
@@ -277,21 +314,24 @@ function buildPiEnv(paths) {
 	};
 }
 
-function runPiTask(task, options, paths) {
-	const args = buildPiArgs(task, options);
-	const promptMode = task.promptMode ?? options.promptMode;
-	const env = buildPiEnv(paths);
+function buildFinalWriterEnv() {
+	return {
+		...process.env,
+		PI_SKIP_VERSION_CHECK: process.env.PI_SKIP_VERSION_CHECK ?? DEFAULT_PI_SKIP_VERSION_CHECK,
+	};
+}
+
+function runPiJsonProcess({ id, promptMode, args, commandCwd, env, timeoutMs, dryRun, metadata = {} }) {
 	const command = formatCommand(args);
-	const commandCwd = paths.workspaceDir;
-	if (options.dryRun) {
+	if (dryRun) {
 		return Promise.resolve({
-			id: task.id,
+			id,
 			promptMode,
 			argv: args,
 			command,
 			commandCwd,
-			irabArtifactDir: env.IRAB_ARTIFACT_DIR,
 			piSkipVersionCheck: env.PI_SKIP_VERSION_CHECK,
+			...metadata,
 			exitCode: 0,
 			durationMs: 0,
 			stdout: "",
@@ -325,14 +365,14 @@ function runPiTask(task, options, paths) {
 		let timeout;
 		let killTimeout;
 
-		if (options.timeoutMs > 0) {
+		if (timeoutMs > 0) {
 			timeout = setTimeout(() => {
 				timedOut = true;
 				killTask("SIGTERM");
 				killTimeout = setTimeout(() => {
 					killTask("SIGKILL");
 				}, 10_000);
-			}, options.timeoutMs);
+			}, timeoutMs);
 		}
 
 		child.stdout.setEncoding("utf8");
@@ -347,13 +387,13 @@ function runPiTask(task, options, paths) {
 			if (timeout) clearTimeout(timeout);
 			if (killTimeout) clearTimeout(killTimeout);
 			resolveTask({
-				id: task.id,
+				id,
 				promptMode,
 				argv: args,
 				command,
 				commandCwd,
-				irabArtifactDir: env.IRAB_ARTIFACT_DIR,
 				piSkipVersionCheck: env.PI_SKIP_VERSION_CHECK,
+				...metadata,
 				exitCode: code ?? 1,
 				signal,
 				durationMs: Date.now() - startedAt,
@@ -366,13 +406,13 @@ function runPiTask(task, options, paths) {
 			if (timeout) clearTimeout(timeout);
 			if (killTimeout) clearTimeout(killTimeout);
 			resolveTask({
-				id: task.id,
+				id,
 				promptMode,
 				argv: args,
 				command,
 				commandCwd,
-				irabArtifactDir: env.IRAB_ARTIFACT_DIR,
 				piSkipVersionCheck: env.PI_SKIP_VERSION_CHECK,
+				...metadata,
 				exitCode: 1,
 				durationMs: Date.now() - startedAt,
 				stdout,
@@ -380,6 +420,22 @@ function runPiTask(task, options, paths) {
 				timedOut,
 			});
 		});
+	});
+}
+
+function runPiTask(task, options, paths) {
+	const args = buildPiArgs(task, options);
+	const promptMode = task.promptMode ?? options.promptMode;
+	const env = buildPiEnv(paths);
+	return runPiJsonProcess({
+		id: task.id,
+		promptMode,
+		args,
+		commandCwd: paths.workspaceDir,
+		env,
+		timeoutMs: options.timeoutMs,
+		dryRun: options.dryRun,
+		metadata: { irabArtifactDir: env.IRAB_ARTIFACT_DIR },
 	});
 }
 
@@ -438,6 +494,7 @@ export function parsePiJsonOutput(stdout) {
 				toolCallId: event.toolCallId,
 				toolName: event.toolName,
 				isError: event.isError,
+				content: textFromContent(event.result.content),
 				details: event.result.details,
 			});
 		}
@@ -451,6 +508,15 @@ export function parsePiJsonOutput(stdout) {
 		finalAssistantErrorMessage,
 		toolResults,
 	};
+}
+
+function isPiRunFailed(result, parsed) {
+	return (
+		result.exitCode !== 0 ||
+		result.timedOut ||
+		parsed.finalAssistantStopReason === "error" ||
+		Boolean(parsed.finalAssistantErrorMessage)
+	);
 }
 
 async function pathExists(path) {
@@ -628,11 +694,169 @@ export async function buildSourceMap(task, parsed, paths) {
 	};
 }
 
-async function writeTaskResult(paths, result, parsed, sourceMap, generatedFiles) {
-	const answerText = parsed.finalAnswer || "";
+function getFinalWriterModel(task, options) {
+	return task.finalWriterModel ?? options.finalWriterModel;
+}
+
+function getFinalWriterConfig(task, options) {
+	const promptMode = task.promptMode ?? options.promptMode;
+	const model = getFinalWriterModel(task, options);
+	if (options.dryRun) return { enabled: false, model, reason: "dry-run" };
+	if (promptMode !== "guided-research") {
+		return { enabled: false, model, reason: "prompt-mode-not-guided-research" };
+	}
+	if (model === DISABLED_FINAL_WRITER_MODEL) return { enabled: false, model, reason: "disabled" };
+	return { enabled: true, model };
+}
+
+function truncateForWriter(text, maxChars) {
+	if (text.length <= maxChars) {
+		return { text, truncated: false, omittedChars: 0 };
+	}
+	return {
+		text: text.slice(0, maxChars),
+		truncated: true,
+		omittedChars: text.length - maxChars,
+	};
+}
+
+function buildToolEvidenceForWriter(parsed) {
+	const sections = [];
+	const includedToolEvidence = [];
+	let remainingChars = FINAL_WRITER_MAX_TOOL_OUTPUT_CHARS;
+
+	for (const [index, toolResult] of parsed.toolResults.entries()) {
+		const content = firstString(toolResult.content);
+		if (!content) continue;
+
+		const details = toolResult.details;
+		const itemLimit = Math.min(FINAL_WRITER_MAX_TOOL_OUTPUT_ITEM_CHARS, remainingChars);
+		if (itemLimit <= 0) {
+			includedToolEvidence.push({
+				index: index + 1,
+				toolName: toolResult.toolName,
+				irabTool: details.tool,
+				query: details.query,
+				included: false,
+				reason: "tool output context limit reached",
+			});
+			continue;
+		}
+
+		const truncated = truncateForWriter(content, itemLimit);
+		remainingChars -= truncated.text.length;
+		includedToolEvidence.push({
+			index: index + 1,
+			toolName: toolResult.toolName,
+			irabTool: details.tool,
+			query: details.query,
+			resultCount: Array.isArray(details.results) ? details.results.length : undefined,
+			artifactCount: Array.isArray(details.artifacts) ? details.artifacts.length : undefined,
+			included: true,
+			includedChars: truncated.text.length,
+			truncated: truncated.truncated,
+			omittedChars: truncated.omittedChars,
+		});
+		sections.push(
+			[
+				`- ${details.tool}${details.query ? ` (${details.query})` : ""}:`,
+				truncated.text,
+				truncated.truncated ? `[Evidence item truncated; omitted ${truncated.omittedChars} chars.]` : "",
+			].join("\n"),
+		);
+	}
+
+	return {
+		text: sections.length > 0 ? sections.join("\n\n") : "[No IRaB tool evidence was captured.]",
+		includedToolEvidence,
+	};
+}
+
+function buildFinalWriterPrompt(task, parsed, sourceMap) {
+	const toolEvidence = buildToolEvidenceForWriter(parsed);
+	const prompt = [
+		"<task_context>",
+		"The following material is the only context for final writing.",
+		"The primary evidence is the current evidence section, extracted from research-stage tool observations.",
+		"Use a factual claim only when the specific claim is supported by an existing visible source marker in current evidence or by a reproducible calculation from cited inputs in current evidence.",
+		"",
+		"## Current evidence",
+		"The following items are research-stage tool observations prepared in DeepTask analyst_report evidence-mode style.",
+		toolEvidence.text,
+		"</task_context>",
+		"",
+		'<writing_instruction source_policy="not_citable">',
+		"The following content defines the report target, output contract, and writing requirements.",
+		"It is not reference material, not source material, and never a citation source.",
+		"Key data points must be found in current evidence with existing source markers before they can be used.",
+		"If current evidence does not support a claim, omit that claim or state that the supplied research material does not support it.",
+		"",
+		"## Original user task",
+		task.prompt,
+		"",
+		"## Final answer request",
+		"Write the final user-facing Markdown answer now.",
+		"Answer directly, preserve the user's language and requested scope, and include the key conclusion, evidence table, assumptions, caveats, and inline citations needed to make the answer self-contained.",
+		"</writing_instruction>",
+	].join("\n");
+
+	return {
+		prompt,
+		context: {
+			toolEvidence: toolEvidence.includedToolEvidence,
+			sourceCount: sourceMap.sourceCount,
+			promptChars: prompt.length,
+		},
+	};
+}
+
+function buildFinalWriterPiArgs(task, options, writerPromptPath) {
+	const model = getFinalWriterModel(task, options);
+	return [
+		PI_SCRIPT,
+		"--mode",
+		"json",
+		...PROJECT_EXTENSION_PATHS.flatMap((extensionPath) => ["--extension", extensionPath]),
+		"--append-system-prompt",
+		GUIDED_FINAL_WRITER_APPEND_SYSTEM_PROMPT,
+		"--model",
+		model,
+		"--name",
+		`${task.name ?? `irab batch ${task.id}`} final writer`,
+		"--no-session",
+		"--no-tools",
+		`@${writerPromptPath}`,
+	];
+}
+
+function runFinalWriterTask(task, options, paths) {
+	const model = getFinalWriterModel(task, options);
+	const args = buildFinalWriterPiArgs(task, options, paths.finalWriterPromptPath);
+	const env = buildFinalWriterEnv();
+	return runPiJsonProcess({
+		id: `${task.id}:final-writer`,
+		promptMode: task.promptMode ?? options.promptMode,
+		args,
+		commandCwd: paths.taskDir,
+		env,
+		timeoutMs: options.timeoutMs,
+		dryRun: false,
+		metadata: { finalWriterModel: model },
+	});
+}
+
+async function writeTaskResult(paths, result, parsed, sourceMap, generatedFiles, finalWriter, finalWriterConfig) {
+	const researchAnswerText = parsed.finalAnswer || "";
+	const answerText = finalWriter?.parsed.finalAnswer || researchAnswerText;
+	const researchFailed = isPiRunFailed(result, parsed);
+	const finalWriterFailed = finalWriter ? isPiRunFailed(finalWriter.result, finalWriter.parsed) : false;
 	const referencedGeneratedFiles = matchGeneratedFileReferences(answerText, generatedFiles);
 
 	await writeFile(paths.answerPath, answerText, "utf8");
+	if (finalWriter) {
+		await writeFile(paths.researchAnswerPath, researchAnswerText, "utf8");
+		await writeFile(paths.finalWriterEventsPath, finalWriter.result.stdout, "utf8");
+	}
 	await writeFile(paths.eventsPath, result.stdout, "utf8");
 	await writeFile(paths.sourcesPath, `${JSON.stringify(sourceMap, null, 2)}\n`, "utf8");
 	await writeFile(
@@ -650,8 +874,14 @@ async function writeTaskResult(paths, result, parsed, sourceMap, generatedFiles)
 				signal: result.signal,
 				durationMs: result.durationMs,
 				timedOut: result.timedOut,
+				failed: researchFailed || finalWriterFailed,
+				researchFailed,
+				finalWriterFailed: finalWriter ? finalWriterFailed : undefined,
 				answerFile: relative(paths.taskDir, paths.answerPath),
+				researchAnswerFile: finalWriter ? relative(paths.taskDir, paths.researchAnswerPath) : undefined,
 				eventsFile: relative(paths.taskDir, paths.eventsPath),
+				finalWriterPromptFile: finalWriter ? relative(paths.taskDir, paths.finalWriterPromptPath) : undefined,
+				finalWriterEventsFile: finalWriter ? relative(paths.taskDir, paths.finalWriterEventsPath) : undefined,
 				sourcesFile: relative(paths.taskDir, paths.sourcesPath),
 				workspaceDir: relative(paths.taskDir, paths.workspaceDir),
 				generatedFilesDir: relative(paths.taskDir, paths.generatedFilesDir),
@@ -662,8 +892,36 @@ async function writeTaskResult(paths, result, parsed, sourceMap, generatedFiles)
 				sourceCount: sourceMap.sourceCount,
 				toolCallCount: sourceMap.toolCalls.length,
 				jsonParseErrors: parsed.parseErrors,
-				finalAssistantStopReason: parsed.finalAssistantStopReason,
-				finalAssistantErrorMessage: parsed.finalAssistantErrorMessage,
+				researchAssistantStopReason: parsed.finalAssistantStopReason,
+				researchAssistantErrorMessage: parsed.finalAssistantErrorMessage,
+				finalAssistantStopReason: finalWriter?.parsed.finalAssistantStopReason ?? parsed.finalAssistantStopReason,
+				finalAssistantErrorMessage: finalWriter?.parsed.finalAssistantErrorMessage ?? parsed.finalAssistantErrorMessage,
+				finalWriter: finalWriter
+					? {
+							enabled: true,
+							model: finalWriter.model,
+							appendSystemPrompt: GUIDED_FINAL_WRITER_APPEND_SYSTEM_PROMPT,
+							argv: finalWriter.result.argv,
+							command: finalWriter.result.command,
+							commandCwd: finalWriter.result.commandCwd,
+							piSkipVersionCheck: finalWriter.result.piSkipVersionCheck,
+							exitCode: finalWriter.result.exitCode,
+							signal: finalWriter.result.signal,
+							durationMs: finalWriter.result.durationMs,
+							timedOut: finalWriter.result.timedOut,
+							promptFile: relative(paths.taskDir, paths.finalWriterPromptPath),
+							eventsFile: relative(paths.taskDir, paths.finalWriterEventsPath),
+							jsonParseErrors: finalWriter.parsed.parseErrors,
+							finalAssistantStopReason: finalWriter.parsed.finalAssistantStopReason,
+							finalAssistantErrorMessage: finalWriter.parsed.finalAssistantErrorMessage,
+							context: finalWriter.context,
+							stderr: finalWriter.result.stderr,
+						}
+					: {
+							enabled: false,
+							model: finalWriterConfig.model,
+							reason: finalWriterConfig.reason,
+						},
 				stderr: result.stderr,
 			},
 			null,
@@ -688,9 +946,30 @@ async function runPool(tasks, options) {
 			const parsed = parsePiJsonOutput(result.stdout);
 			const generatedFiles = await copyWorkspaceFiles(paths);
 			const sourceMap = await buildSourceMap(task, parsed, paths);
-			await writeTaskResult(paths, result, parsed, sourceMap, generatedFiles);
-			if (result.exitCode !== 0) failed += 1;
-			console.error(`[irab-batch] end ${task.id} exit=${result.exitCode} durationMs=${result.durationMs}`);
+			let finalWriter;
+			const finalWriterConfig = getFinalWriterConfig(task, options);
+			if (finalWriterConfig.enabled) {
+				console.error(`[irab-batch] final-writer start ${task.id} model=${finalWriterConfig.model}`);
+				const writerInput = buildFinalWriterPrompt(task, parsed, sourceMap);
+				await writeFile(paths.finalWriterPromptPath, writerInput.prompt, "utf8");
+				const writerResult = await runFinalWriterTask(task, options, paths);
+				finalWriter = {
+					model: finalWriterConfig.model,
+					context: writerInput.context,
+					result: writerResult,
+					parsed: parsePiJsonOutput(writerResult.stdout),
+				};
+				console.error(
+					`[irab-batch] final-writer end ${task.id} exit=${writerResult.exitCode} durationMs=${writerResult.durationMs}`,
+				);
+			}
+			await writeTaskResult(paths, result, parsed, sourceMap, generatedFiles, finalWriter, finalWriterConfig);
+			if (isPiRunFailed(result, parsed) || (finalWriter && isPiRunFailed(finalWriter.result, finalWriter.parsed))) {
+				failed += 1;
+			}
+			console.error(
+				`[irab-batch] end ${task.id} exit=${result.exitCode} writerExit=${finalWriter?.result.exitCode ?? "none"} durationMs=${result.durationMs}`,
+			);
 		}
 	}
 
@@ -722,11 +1001,14 @@ async function main() {
 				concurrency: options.concurrency,
 				promptMode: options.promptMode,
 				promptModeAppendSystemPrompts: getPromptModeAppendSystemPrompts(options.promptMode),
+				finalWriterModel: options.finalWriterModel,
+				finalWriterAppendSystemPrompt: GUIDED_FINAL_WRITER_APPEND_SYSTEM_PROMPT,
 				timeoutMs: options.timeoutMs,
 				dryRun: options.dryRun,
 				piSkipVersionCheck: process.env.PI_SKIP_VERSION_CHECK ?? DEFAULT_PI_SKIP_VERSION_CHECK,
 				taskCount: tasks.length,
-				outputLayout: "tasks/<id>/{answer.md,result.json,events.jsonl,sources.json,workspace,generated-files,artifacts}",
+				outputLayout:
+					"tasks/<id>/{answer.md,research-answer.md,result.json,events.jsonl,final-writer-input.md,final-writer-events.jsonl,sources.json,workspace,generated-files,artifacts}",
 				startedAt: new Date().toISOString(),
 			},
 			null,
