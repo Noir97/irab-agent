@@ -28,6 +28,7 @@ const DISABLED_FINAL_WRITER_MODEL = "none";
 const DEFAULT_FINAL_WRITER_MODEL = "rabyte/openai-gpt-5.5";
 const FINAL_WRITER_MAX_TOOL_OUTPUT_CHARS = 240_000;
 const FINAL_WRITER_MAX_TOOL_OUTPUT_ITEM_CHARS = 50_000;
+const FINAL_WRITER_MAX_TOOL_ARGS_CHARS = 1_000;
 const IRAB_TOOL_NAMES = new Set([
 	"search_research_corpus",
 	"search_global_market_data",
@@ -35,6 +36,7 @@ const IRAB_TOOL_NAMES = new Set([
 	"search_public_web",
 	"read_public_webpage",
 ]);
+const FINAL_WRITER_SKIPPED_TOOL_NAMES = new Set(["answer", "complete", "analyst_report", "final_report_writer", "read_skill", "write"]);
 
 function printHelp() {
 	console.log(`Usage:
@@ -460,6 +462,7 @@ export function parsePiJsonOutput(stdout) {
 	const events = [];
 	const parseErrors = [];
 	const toolResults = [];
+	const toolArgsByCallId = new Map();
 	let finalAnswer = "";
 	let finalAssistantStopReason;
 	let finalAssistantErrorMessage;
@@ -482,20 +485,28 @@ export function parsePiJsonOutput(stdout) {
 		}
 		events.push(event);
 
+		if (event.type === "tool_execution_start" && typeof event.toolCallId === "string") {
+			toolArgsByCallId.set(event.toolCallId, event.args);
+		}
+
 		if (event.type === "message_end" && isRecord(event.message) && event.message.role === "assistant") {
 			finalAnswer = textFromContent(event.message.content);
 			finalAssistantStopReason = event.message.stopReason;
 			finalAssistantErrorMessage = event.message.errorMessage;
 		}
 
-		if (event.type === "tool_execution_end" && isRecord(event.result) && isIrabToolDetails(event.result.details)) {
+		if (event.type === "tool_execution_end" && isRecord(event.result) && typeof event.toolName === "string") {
+			const content = textFromContent(event.result.content);
+			if (FINAL_WRITER_SKIPPED_TOOL_NAMES.has(event.toolName) || !content.trim()) continue;
+			const toolCallId = typeof event.toolCallId === "string" ? event.toolCallId : undefined;
 			toolResults.push({
 				eventType: event.type,
-				toolCallId: event.toolCallId,
+				toolCallId,
 				toolName: event.toolName,
-				isError: event.isError,
-				content: textFromContent(event.result.content),
-				details: event.result.details,
+				args: isRecord(event.args) ? event.args : toolCallId ? toolArgsByCallId.get(toolCallId) : undefined,
+				isError: Boolean(event.isError),
+				content,
+				details: isRecord(event.result.details) ? event.result.details : {},
 			});
 		}
 	}
@@ -646,6 +657,8 @@ export async function buildSourceMap(task, parsed, paths) {
 
 	for (const toolResult of parsed.toolResults) {
 		const details = toolResult.details;
+		if (!isIrabToolDetails(details)) continue;
+
 		const records = Array.isArray(details.results) ? details.results : [];
 		const recordsBySourceId = recordBySourceId(records);
 		toolCalls.push({
@@ -720,6 +733,18 @@ function truncateForWriter(text, maxChars) {
 	};
 }
 
+function formatToolArgsForWriter(args) {
+	if (args === undefined) return "";
+	let text;
+	try {
+		text = JSON.stringify(args);
+	} catch {
+		text = String(args);
+	}
+	const truncated = truncateForWriter(text, FINAL_WRITER_MAX_TOOL_ARGS_CHARS);
+	return truncated.truncated ? `${truncated.text} [Tool arguments truncated; omitted ${truncated.omittedChars} chars.]` : truncated.text;
+}
+
 function buildToolEvidenceForWriter(parsed) {
 	const sections = [];
 	const includedToolEvidence = [];
@@ -730,13 +755,15 @@ function buildToolEvidenceForWriter(parsed) {
 		if (!content) continue;
 
 		const details = toolResult.details;
+		const isIrabTool = isIrabToolDetails(details);
 		const itemLimit = Math.min(FINAL_WRITER_MAX_TOOL_OUTPUT_ITEM_CHARS, remainingChars);
 		if (itemLimit <= 0) {
 			includedToolEvidence.push({
 				index: index + 1,
 				toolName: toolResult.toolName,
-				irabTool: details.tool,
-				query: details.query,
+				evidenceType: isIrabTool ? "irab" : "local",
+				irabTool: isIrabTool ? details.tool : undefined,
+				query: isIrabTool ? details.query : undefined,
 				included: false,
 				reason: "tool output context limit reached",
 			});
@@ -748,26 +775,41 @@ function buildToolEvidenceForWriter(parsed) {
 		includedToolEvidence.push({
 			index: index + 1,
 			toolName: toolResult.toolName,
-			irabTool: details.tool,
-			query: details.query,
-			resultCount: Array.isArray(details.results) ? details.results.length : undefined,
-			artifactCount: Array.isArray(details.artifacts) ? details.artifacts.length : undefined,
+			evidenceType: isIrabTool ? "irab" : "local",
+			irabTool: isIrabTool ? details.tool : undefined,
+			query: isIrabTool ? details.query : undefined,
+			resultCount: isIrabTool && Array.isArray(details.results) ? details.results.length : undefined,
+			artifactCount: isIrabTool && Array.isArray(details.artifacts) ? details.artifacts.length : undefined,
+			isError: toolResult.isError,
 			included: true,
 			includedChars: truncated.text.length,
 			truncated: truncated.truncated,
 			omittedChars: truncated.omittedChars,
 		});
-		sections.push(
-			[
-				`- ${details.tool}${details.query ? ` (${details.query})` : ""}:`,
-				truncated.text,
-				truncated.truncated ? `[Evidence item truncated; omitted ${truncated.omittedChars} chars.]` : "",
-			].join("\n"),
-		);
+		if (isIrabTool) {
+			sections.push(
+				[
+					`- ${details.tool}${details.query ? ` (${details.query})` : ""}:`,
+					truncated.text,
+					truncated.truncated ? `[Evidence item truncated; omitted ${truncated.omittedChars} chars.]` : "",
+				].join("\n"),
+			);
+		} else {
+			const argsText = formatToolArgsForWriter(toolResult.args);
+			sections.push(
+				[
+					`- ${toolResult.toolName}${toolResult.isError ? " (error)" : ""}:`,
+					argsText ? `Tool arguments: ${argsText}` : "",
+					"Tool observation:",
+					truncated.text,
+					truncated.truncated ? `[Evidence item truncated; omitted ${truncated.omittedChars} chars.]` : "",
+				].join("\n"),
+			);
+		}
 	}
 
 	return {
-		text: sections.length > 0 ? sections.join("\n\n") : "[No IRaB tool evidence was captured.]",
+		text: sections.length > 0 ? sections.join("\n\n") : "[No research-stage tool evidence was captured.]",
 		includedToolEvidence,
 	};
 }
@@ -778,7 +820,7 @@ function buildFinalWriterPrompt(task, parsed, sourceMap) {
 		"<task_context>",
 		"The following material is the only context for final writing.",
 		"The primary evidence is the current evidence section, extracted from research-stage tool observations.",
-		"Use a factual claim only when the specific claim is supported by an existing visible source marker in current evidence or by a reproducible calculation from cited inputs in current evidence.",
+		"Use a factual claim only when the specific claim is supported by an existing visible source marker in current evidence, directly supported by a local tool observation, or by a reproducible calculation from cited inputs in current evidence.",
 		"",
 		"## Current evidence",
 		"The following items are research-stage tool observations prepared in DeepTask analyst_report evidence-mode style.",
@@ -788,7 +830,7 @@ function buildFinalWriterPrompt(task, parsed, sourceMap) {
 		'<writing_instruction source_policy="not_citable">',
 		"The following content defines the report target, output contract, and writing requirements.",
 		"It is not reference material, not source material, and never a citation source.",
-		"Key data points must be found in current evidence with existing source markers before they can be used.",
+		"Key data points must be found in current evidence with existing source markers or directly relevant local tool observations before they can be used.",
 		"If current evidence does not support a claim, omit that claim or state that the supplied research material does not support it.",
 		"",
 		"## Original user task",
@@ -891,6 +933,7 @@ async function writeTaskResult(paths, result, parsed, sourceMap, generatedFiles,
 				referencedGeneratedFiles,
 				sourceCount: sourceMap.sourceCount,
 				toolCallCount: sourceMap.toolCalls.length,
+				evidenceToolObservationCount: parsed.toolResults.length,
 				jsonParseErrors: parsed.parseErrors,
 				researchAssistantStopReason: parsed.finalAssistantStopReason,
 				researchAssistantErrorMessage: parsed.finalAssistantErrorMessage,

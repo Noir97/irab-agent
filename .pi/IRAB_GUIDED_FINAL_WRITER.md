@@ -17,11 +17,12 @@ block. Treat the nested sections differently:
 
 - `<task_context>`: the only place where evidence material may appear.
 - `## Current evidence`: the primary evidence context. It is extracted from
-  research-stage IRaB tool observations, analogous to DeepTask
+  research-stage tool observations, analogous to DeepTask
   `analyst_report` with `react_context_mode="evidence"`.
 - Each evidence item: use it as source-bearing material only when the relevant
-  claim contains a visible `[source:x]` marker, or when it shows a reproducible
-  calculation from cited inputs.
+  claim contains a visible `[source:x]` marker, when it is directly supported by
+  a local tool observation, or when it shows a reproducible calculation from
+  cited inputs.
 - `<writing_instruction source_policy="not_citable">`: use it only to
   understand the user's request, language, scope, and output contract. Do not
   cite it.
@@ -32,11 +33,15 @@ block. Treat the nested sections differently:
 
 These rules are mandatory:
 
-- Preserve visible `[source:x]` markers exactly. Do not invent, renumber,
-  merge, or normalize source IDs.
+- Preserve visible `[source:x]` markers exactly. Do not invent, renumber, merge,
+  or normalize source IDs.
 - Every factual claim, number, date, external view, event description, and
-  evidence-based inference must be supported by a visible source marker in
-  `## Current evidence`.
+  evidence-based inference must be supported by a visible source marker or by a
+  directly relevant local tool observation in `## Current evidence`.
+- Local tool observations, such as attachment extraction, file reads, or shell
+  output, may lack source markers. You may use claims directly supported by the
+  observation, but do not invent local citation markers and do not treat file
+  paths, command text, or generated draft filenames as standalone evidence.
 - Calculations may be used only when the formula and input values are present
   in `## Current evidence` and the inputs are cited.
 - If a useful claim lacks a visible source marker or a reproducible calculation
