@@ -10,6 +10,7 @@ const PI_SCRIPT = process.env.IRAB_BATCH_PI_SCRIPT
 	? resolve(process.env.IRAB_BATCH_PI_SCRIPT)
 	: join(REPO_ROOT, "pi-test.sh");
 const PROJECT_APPEND_SYSTEM_PROMPT = join(REPO_ROOT, ".pi", "APPEND_SYSTEM.md");
+const GUIDED_RESEARCH_APPEND_SYSTEM_PROMPT = join(REPO_ROOT, ".pi", "IRAB_GUIDED_RESEARCH.md");
 const PROJECT_EXTENSION_PATHS = [
 	join(REPO_ROOT, ".pi", "extensions", "irab-finance-tools", "index.ts"),
 	join(REPO_ROOT, ".pi", "extensions", "prompt-url-widget.ts"),
@@ -20,6 +21,8 @@ const DEFAULT_MODEL = "rabyte/wangsu-claude-opus-4-6";
 const DEFAULT_CONCURRENCY = 10;
 const DEFAULT_OUT_DIR = join(REPO_ROOT, "tmp", "irab-batch-runs", new Date().toISOString().replace(/[:.]/gu, "-"));
 const DEFAULT_PI_SKIP_VERSION_CHECK = "1";
+const DEFAULT_PROMPT_MODE = "raw";
+const PROMPT_MODES = new Set(["raw", "guided-research"]);
 const IRAB_TOOL_NAMES = new Set([
 	"search_research_corpus",
 	"search_global_market_data",
@@ -37,6 +40,7 @@ Options:
   --out <dir>           Output directory. Default: tmp/irab-batch-runs/<timestamp>
   --model <model>       Pi model. Default: ${DEFAULT_MODEL}
   --concurrency <n>     Parallel Pi processes. Default: ${DEFAULT_CONCURRENCY}
+  --prompt-mode <mode>  Prompt mode: raw or guided-research. Default: ${DEFAULT_PROMPT_MODE}
   --timeout-ms <n>      Per-task timeout. Default: 0, no timeout
   --dry-run             Validate input and write empty result files without running Pi
   --help                Show this help
@@ -46,6 +50,7 @@ Task JSONL fields:
   prompt                Benchmark prompt
   model                 Optional per-task model override
   name                  Optional Pi session name
+  promptMode            Optional per-task prompt mode override
   appendSystemPrompt    Optional extra system prompt text
 
 Output layout:
@@ -66,6 +71,7 @@ function parseArgs(argv) {
 		outDir: DEFAULT_OUT_DIR,
 		model: DEFAULT_MODEL,
 		concurrency: DEFAULT_CONCURRENCY,
+		promptMode: DEFAULT_PROMPT_MODE,
 		timeoutMs: 0,
 		dryRun: false,
 		help: false,
@@ -89,6 +95,9 @@ function parseArgs(argv) {
 		} else if (arg === "--concurrency" && argv[index + 1]) {
 			options.concurrency = parsePositiveInteger(argv[index + 1], "--concurrency");
 			index += 1;
+		} else if (arg === "--prompt-mode" && argv[index + 1]) {
+			options.promptMode = parsePromptMode(argv[index + 1], "--prompt-mode");
+			index += 1;
 		} else if (arg === "--timeout-ms" && argv[index + 1]) {
 			options.timeoutMs = parseNonNegativeInteger(argv[index + 1], "--timeout-ms");
 			index += 1;
@@ -104,6 +113,13 @@ function parseArgs(argv) {
 	options.input = resolve(REPO_ROOT, options.input);
 	options.outDir = resolve(REPO_ROOT, options.outDir);
 	return options;
+}
+
+function parsePromptMode(value, label) {
+	if (!PROMPT_MODES.has(value)) {
+		throw new Error(`${label} must be one of: ${[...PROMPT_MODES].join(", ")}`);
+	}
+	return value;
 }
 
 function parsePositiveInteger(value, label) {
@@ -139,9 +155,10 @@ function parseTask(rawLine, lineNumber) {
 	const prompt = readStringField(parsed, "prompt", lineNumber);
 	const model = readOptionalStringField(parsed, "model", lineNumber);
 	const name = readOptionalStringField(parsed, "name", lineNumber);
+	const promptMode = readOptionalPromptModeField(parsed, "promptMode", lineNumber);
 	const appendSystemPrompt = readOptionalStringField(parsed, "appendSystemPrompt", lineNumber);
 
-	return { id, prompt, model, name, appendSystemPrompt };
+	return { id, prompt, model, name, promptMode, appendSystemPrompt };
 }
 
 function readStringField(value, field, lineNumber) {
@@ -159,6 +176,15 @@ function readOptionalStringField(value, field, lineNumber) {
 		throw new Error(`Line ${lineNumber} field ${field} must be a non-empty string when provided`);
 	}
 	return fieldValue.trim();
+}
+
+function readOptionalPromptModeField(value, field, lineNumber) {
+	const fieldValue = value[field];
+	if (fieldValue === undefined) return undefined;
+	if (typeof fieldValue !== "string" || !fieldValue.trim()) {
+		throw new Error(`Line ${lineNumber} field ${field} must be a non-empty string when provided`);
+	}
+	return parsePromptMode(fieldValue.trim(), `Line ${lineNumber} field ${field}`);
 }
 
 async function readTasks(inputPath) {
@@ -212,7 +238,14 @@ function formatCommand(args) {
 	return args.map(shellQuote).join(" ");
 }
 
+function getPromptModeAppendSystemPrompts(promptMode) {
+	if (promptMode === "raw") return [];
+	if (promptMode === "guided-research") return [GUIDED_RESEARCH_APPEND_SYSTEM_PROMPT];
+	throw new Error(`Unsupported prompt mode: ${promptMode}`);
+}
+
 function buildPiArgs(task, options) {
+	const promptMode = task.promptMode ?? options.promptMode;
 	const args = [
 		PI_SCRIPT,
 		"--mode",
@@ -226,6 +259,9 @@ function buildPiArgs(task, options) {
 		task.name ?? `irab batch ${task.id}`,
 		"--no-session",
 	];
+	for (const appendSystemPrompt of getPromptModeAppendSystemPrompts(promptMode)) {
+		args.push("--append-system-prompt", appendSystemPrompt);
+	}
 	if (task.appendSystemPrompt) {
 		args.push("--append-system-prompt", task.appendSystemPrompt);
 	}
@@ -243,12 +279,14 @@ function buildPiEnv(paths) {
 
 function runPiTask(task, options, paths) {
 	const args = buildPiArgs(task, options);
+	const promptMode = task.promptMode ?? options.promptMode;
 	const env = buildPiEnv(paths);
 	const command = formatCommand(args);
 	const commandCwd = paths.workspaceDir;
 	if (options.dryRun) {
 		return Promise.resolve({
 			id: task.id,
+			promptMode,
 			argv: args,
 			command,
 			commandCwd,
@@ -310,6 +348,7 @@ function runPiTask(task, options, paths) {
 			if (killTimeout) clearTimeout(killTimeout);
 			resolveTask({
 				id: task.id,
+				promptMode,
 				argv: args,
 				command,
 				commandCwd,
@@ -328,6 +367,7 @@ function runPiTask(task, options, paths) {
 			if (killTimeout) clearTimeout(killTimeout);
 			resolveTask({
 				id: task.id,
+				promptMode,
 				argv: args,
 				command,
 				commandCwd,
@@ -600,6 +640,7 @@ async function writeTaskResult(paths, result, parsed, sourceMap, generatedFiles)
 		`${JSON.stringify(
 			{
 				id: result.id,
+				promptMode: result.promptMode,
 				argv: result.argv,
 				command: result.command,
 				commandCwd: result.commandCwd,
@@ -679,6 +720,8 @@ async function main() {
 				outDir: options.outDir,
 				model: options.model,
 				concurrency: options.concurrency,
+				promptMode: options.promptMode,
+				promptModeAppendSystemPrompts: getPromptModeAppendSystemPrompts(options.promptMode),
 				timeoutMs: options.timeoutMs,
 				dryRun: options.dryRun,
 				piSkipVersionCheck: process.env.PI_SKIP_VERSION_CHECK ?? DEFAULT_PI_SKIP_VERSION_CHECK,

@@ -16,6 +16,8 @@ underlying Pi agent monorepo notes are kept separately in
   [packages/irab-finance-tools](packages/irab-finance-tools).
 - Runtime citation guidance for source-aware answers:
   [.pi/APPEND_SYSTEM.md](.pi/APPEND_SYSTEM.md).
+- An optional guided research prompt preset for workflow-standardized runs:
+  [.pi/IRAB_GUIDED_RESEARCH.md](.pi/IRAB_GUIDED_RESEARCH.md).
 - A JSONL batch runner that stores answers, generated files, raw events,
   copied tool artifacts, and citation-source mappings:
   [scripts/irab-batch-example.mjs](scripts/irab-batch-example.mjs).
@@ -140,6 +142,15 @@ Benchmark answers must be source-grounded:
 
 This behavior is enforced by [.pi/APPEND_SYSTEM.md](.pi/APPEND_SYSTEM.md).
 
+The batch runner also supports prompt modes:
+
+- `raw`: the default existing behavior. It loads only the base IRaB
+  source-grounding prompt.
+- `guided-research`: additionally loads
+  [.pi/IRAB_GUIDED_RESEARCH.md](.pi/IRAB_GUIDED_RESEARCH.md), which standardizes
+  retrieval depth, date/definition handling, cross-checking, calculations,
+  table usage, and self-contained final answers.
+
 ## Prepare Task Data
 
 Batch input is JSONL: one task per line. Each line must be a JSON object.
@@ -154,6 +165,8 @@ Optional fields:
 
 - `model`: per-task model override, for example `<provider>/<model>`.
 - `name`: Pi session display name.
+- `promptMode`: optional per-task prompt mode override, either `raw` or
+  `guided-research`.
 - `appendSystemPrompt`: extra task-specific instructions appended after the
   default IRaB source-grounding prompt. Use this only for task-local protocol
   changes that are not already covered by `.pi/APPEND_SYSTEM.md`.
@@ -205,6 +218,15 @@ node scripts/irab-batch-example.mjs \
   --timeout-ms 900000
 ```
 
+Run with the workflow-standardized guided research prompt:
+
+```bash
+node scripts/irab-batch-example.mjs \
+  --input examples/irab-batch-tasks.jsonl \
+  --model <provider>/<model> \
+  --prompt-mode guided-research
+```
+
 Dry-run command construction and output layout without calling Pi:
 
 ```bash
@@ -220,10 +242,14 @@ Batch defaults:
   evaluation, pass `--model` explicitly so the run records the intended
   provider/model.
 - Default concurrency: `10`.
+- Default prompt mode: `raw`.
 - Default output directory: `tmp/irab-batch-runs/<timestamp>`.
 - Each task runs in an isolated workspace under its result directory.
 - The runner explicitly loads the repo IRaB extension and
   `.pi/APPEND_SYSTEM.md`, even though the task working directory is isolated.
+- In `guided-research` mode, the runner appends
+  `.pi/IRAB_GUIDED_RESEARCH.md` after `.pi/APPEND_SYSTEM.md`. Task-level
+  `appendSystemPrompt` content is appended last.
 
 ## Inspect Results
 
@@ -248,14 +274,15 @@ tmp/irab-batch-runs/<timestamp>/
 Top-level files:
 
 - `run.json`: input path, model, concurrency, dry-run flag, task count, and
-  output layout.
+  output layout. It also records the default prompt mode used for the run.
 
 Per-task files:
 
 - `answer.md`: final assistant text from Pi JSON mode.
 - `events.jsonl`: raw Pi JSON events captured from stdout.
 - `result.json`: task metadata, command argv, exit code, stderr, generated-file
-  list, referenced generated files, parse errors, and source/tool counts.
+  list, referenced generated files, parse errors, prompt mode, and source/tool
+  counts.
 - `sources.json`: citation evidence map for visible `[source:x]` markers.
 - `workspace/`: task working directory used while Pi runs.
 - `generated-files/`: files the agent wrote in the task workspace, such as
@@ -359,6 +386,7 @@ Unexpected Pi update notification:
 | Path | Purpose |
 | --- | --- |
 | `.pi/APPEND_SYSTEM.md` | Runtime source-grounding and report-writing guidance. |
+| `.pi/IRAB_GUIDED_RESEARCH.md` | Optional guided research prompt preset. |
 | `.pi/extensions/irab-finance-tools/index.ts` | Project-local Pi extension entrypoint. |
 | `packages/irab-finance-tools/src/index.ts` | IRaB model/tool registration and gateway client. |
 | `examples/irab-batch-tasks.jsonl` | Minimal JSONL batch input example. |
