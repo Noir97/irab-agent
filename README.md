@@ -36,7 +36,7 @@ credentials, or token-management secrets.
 To request access, submit the public token application form:
 
 ```text
-http://irab.rabyte.cn/irab/apply
+http://irab.rabyte.cn/apply
 ```
 
 The application asks for:
@@ -49,7 +49,7 @@ Rejected requests receive a status update email. Open an approved claim link
 once and store the displayed environment variables:
 
 ```bash
-IRAB_GATEWAY_URL=http://irab.rabyte.cn/irab
+IRAB_GATEWAY_URL=http://irab.rabyte.cn
 IRAB_TOKEN=irab_...
 ```
 
@@ -99,12 +99,12 @@ Run one interactive benchmark session with the model under evaluation:
 ```
 
 Some evaluation tokens may also expose hosted Rabyte-compatible models. If that
-scope is enabled, they appear under the `rabyte` provider and can be selected in
-the same `provider/model` form:
+scope is enabled, select the exact `provider/model` identifier shown by
+`--list-models`:
 
 ```bash
-./pi-test.sh --list-models | rg rabyte
-./pi-test.sh --model rabyte/wangsu-claude-opus-4-6
+./pi-test.sh --list-models
+./pi-test.sh --model <provider>/<model>
 ```
 
 `pi-test.sh` defaults `PI_SKIP_VERSION_CHECK=1` so benchmark startup output stays
